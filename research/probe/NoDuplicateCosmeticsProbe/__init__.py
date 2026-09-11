@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 import re
-import time
 
 import unrealsdk
 from mods_base import Game, build_mod, get_pc, hook
@@ -14,7 +13,6 @@ from unrealsdk.unreal import BoundFunction, UObject, WrappedStruct
 assert Game.get_current() is Game.BL3, "NoDuplicateCosmeticsProbe supports Borderlands 3 only"
 
 BALANCE_POST_BEGIN_PLAY = "/Script/GbxInventory.InventoryBalanceStateComponent:PostBeginPlay"
-TICK_HOOK = "Engine.GameViewportClient:Tick"
 
 ECHO_POOL_PATH = (
     "/Game/PlayerCharacters/_Customizations/EchoDevice/ItemPools/"
@@ -22,8 +20,6 @@ ECHO_POOL_PATH = (
 )
 
 REQUESTS = 256
-PLAYER_STABLE_SECONDS = 2.0
-BATCH_TIMEOUT_SECONDS = 15.0
 
 _pool: UObject | None = None
 _target_idx: int | None = None
@@ -40,8 +36,6 @@ _batch_target_hits = 0
 _batch_counts: Counter[str] = Counter()
 
 _auto_state = "idle"
-_ready_since: float | None = None
-_batch_started_at = 0.0
 _results: dict[str, dict[str, int | float]] = {}
 _auto_failed = False
 
@@ -343,14 +337,12 @@ def _restore() -> bool:
 
 def _reset_batch(label: str) -> None:
     global _active_batch, _batch_requests, _batch_observed, _batch_target_hits, _batch_counts
-    global _batch_started_at
 
     _active_batch = label
     _batch_requests = REQUESTS
     _batch_observed = 0
     _batch_target_hits = 0
     _batch_counts = Counter()
-    _batch_started_at = time.monotonic()
 
 
 def _spawn(label: str) -> bool:
@@ -418,12 +410,6 @@ def _snapshot_batch(label: str) -> None:
     )
 
 
-def _batch_finished() -> bool:
-    if _batch_observed >= _batch_requests:
-        return True
-    return (time.monotonic() - _batch_started_at) >= BATCH_TIMEOUT_SECONDS
-
-
 def _fail(reason: str) -> None:
     global _auto_state, _auto_failed
     _auto_failed = True
@@ -460,79 +446,57 @@ def _finish() -> None:
     _auto_state = "done"
 
 
-@hook(TICK_HOOK, Type.POST)
-def _tick(
-    _obj: UObject,
-    _args: WrappedStruct,
-    _ret: Any,
-    _func: BoundFunction,
-) -> None:
-    global _auto_state, _ready_since
+def _start_auto(source: str) -> None:
+    global _auto_state
 
-    if _auto_state in ("idle", "done", "failed"):
+    if _auto_state != "wait_player":
+        return
+    if not _player_ready():
         return
 
-    now = time.monotonic()
-
-    if _auto_state == "wait_player":
-        if not _player_ready():
-            _ready_since = None
-            return
-        if _ready_since is None:
-            _ready_since = now
-            return
-        if now - _ready_since < PLAYER_STABLE_SECONDS:
-            return
-
-        logging.info(
-            "[NDCAttributeAuto] PLAYER_READY stable_seconds="
-            f"{PLAYER_STABLE_SECONDS:.1f}; starting automatic sequence"
-        )
-        if not _build_plan():
-            _fail("plan_failed")
-            return
-        if not _spawn("baseline"):
-            _fail("baseline_spawn_failed")
-            return
-        _auto_state = "wait_baseline"
+    logging.info(
+        f"[NDCAttributeAuto] PLAYER_READY source={source}; starting automatic sequence"
+    )
+    if not _build_plan():
+        _fail("plan_failed")
         return
 
-    if _auto_state == "wait_baseline" and _batch_finished():
+    _auto_state = "wait_baseline"
+    if not _spawn("baseline"):
+        _fail("baseline_spawn_failed")
+
+
+def _advance_completed_batch() -> None:
+    global _auto_state
+
+    if _batch_observed < _batch_requests:
+        return
+
+    if _auto_state == "wait_baseline":
         _snapshot_batch("baseline")
-        if _batch_observed < REQUESTS:
-            _fail("baseline_timeout_or_missing_results")
-            return
         if not _apply_constant_only():
             _fail("constant_only_apply_failed")
             return
+        _auto_state = "wait_constant"
         if not _spawn("constant_only"):
             _fail("constant_only_spawn_failed")
-            return
-        _auto_state = "wait_constant"
         return
 
-    if _auto_state == "wait_constant" and _batch_finished():
+    if _auto_state == "wait_constant":
         _snapshot_batch("constant_only")
-        if _batch_observed < REQUESTS:
-            _fail("constant_only_timeout_or_missing_results")
-            return
         if not _restore():
             _fail("constant_only_restore_failed")
             return
         if not _apply_both_zero():
             _fail("both_zero_apply_failed")
             return
+        _auto_state = "wait_both"
         if not _spawn("both_zero"):
             _fail("both_zero_spawn_failed")
-            return
-        _auto_state = "wait_both"
         return
 
-    if _auto_state == "wait_both" and _batch_finished():
+    if _auto_state == "wait_both":
         _snapshot_batch("both_zero")
-        if _batch_observed < REQUESTS:
-            _fail("both_zero_timeout_or_missing_results")
-            return
         if not _restore():
             _fail("both_zero_restore_failed")
             return
@@ -552,6 +516,16 @@ def _balance_post_begin_play(
 ) -> None:
     global _batch_observed, _batch_target_hits
 
+    # This exact lifecycle hook already worked in the earlier probes. Use it as the
+    # readiness driver too, rather than guessing at a Tick UFunction.
+    if _auto_state == "wait_player":
+        _start_auto("InventoryBalanceStateComponent.PostBeginPlay")
+        # The event which woke the state machine belongs to normal character/map load;
+        # it must not contaminate our synthetic baseline.
+        return
+
+    if _auto_state not in ("wait_baseline", "wait_constant", "wait_both"):
+        return
     if _active_batch == "<none>":
         return
 
@@ -573,13 +547,15 @@ def _balance_post_begin_play(
     if balance_path == _target_balance_path:
         _batch_target_hits += 1
 
+    if _batch_observed == _batch_requests:
+        _advance_completed_batch()
+
 
 def on_enable() -> None:
-    global _auto_state, _ready_since, _auto_failed, _mutation_mode, _active_batch
+    global _auto_state, _auto_failed, _mutation_mode, _active_batch
     global _pool, _target_idx, _target_balance_path, _original_sig, _results
 
     _auto_state = "wait_player"
-    _ready_since = None
     _auto_failed = False
     _mutation_mode = "none"
     _active_batch = "<none>"
@@ -590,9 +566,13 @@ def on_enable() -> None:
     _results = {}
 
     logging.info(
-        "[NDCAttributeAuto] ENABLED build=0.7.1 "
-        "automation=armed; waiting for stable loaded player"
+        "[NDCAttributeAuto] ENABLED build=0.7.3 "
+        "automation=armed; bootstrap=on_enable-or-balance-state-PostBeginPlay"
     )
+
+    # Covers hot-enable/reload while already inside a fully loaded character.
+    if _player_ready():
+        _start_auto("on_enable")
 
 
 def on_disable() -> None:
@@ -604,8 +584,8 @@ def on_disable() -> None:
 
 
 logging.info(
-    "[NDCAttributeAuto] LOADED build=0.7.1 "
-    "mode=fully-automatic-after-player-load "
+    "[NDCAttributeAuto] LOADED build=0.7.3 "
+    "mode=event-driven-auto bootstrap=InventoryBalanceStateComponent.PostBeginPlay "
     f"requests_per_phase={REQUESTS}"
 )
 
