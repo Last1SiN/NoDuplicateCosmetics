@@ -1,21 +1,20 @@
 # Next bounded front
 
-Build and test a **stock cosmetic child-pool exhaustion propagation** probe.
+Continue the **stock cosmetic child-pool exhaustion propagation** experiment, but do not mutate attribute-backed weights yet.
 
-Use one exact vanilla child pool reachable from `ItemPool_SkinsAndMisc`; prefer a direct-leaf category whose parent edge in the world root is a simple constant weight so the first propagation experiment has no attribute-expression ambiguity.
+Probe 0.6.0 rejected the ECHO target before mutation because its first leaf uses the rarity attribute `Att_RarityWeight_05_Legendary`. That fail-closed result is now part of the evidence and attribute-backed leaf mutation is a separate later front.
 
-Boundary:
+Use the stock Heads branch for the corrected constant-only experiment:
 
-- synthetic exhaustion is allowed only to establish resolver semantics; do not alter profile ownership;
-- capture exact full weight signatures for every touched leaf and parent edge;
-- do not alter `Quantity`, `PoolProbability`, non-cosmetic entries, or foreign pools;
-- first set all leaves of the exact dedicated cosmetic child pool ineligible and directly roll that exact pool;
-- expected direct-pool behavior: no eligible cosmetic means no replacement drop;
-- then set only that exhausted child branch in the broader `ItemPool_SkinsAndMisc` parent ineligible;
-- roll the world root before/after propagation and verify the exhausted category disappears while the parent's native no-drop ratio remains comparable;
-- parent resolution may use only remaining branches already reachable from that exact world root;
-- never add entries or redirect to another pool;
-- restore every touched leaf and parent-edge signature exactly with a mutation-ownership guard;
-- do not yet generalize to complex attribute-driven parent edges, arbitrary mission/dedicated sources, or production code.
+- discover the four character-specific head leaf pools reachable from the stock Heads selector;
+- fail closed unless all 24 direct head leaves are simple positive constant weights;
+- capture exact full signatures for those 24 leaves and for the exact `ItemPool_SkinsAndMisc -> Heads` edge;
+- do not mutate the attribute-driven intermediate Heads->class selector;
+- baseline the world root and the exact Siren head leaf pool separately;
+- synthetically exhaust all 24 head leaves;
+- directly roll the exhausted Siren head pool and require no cosmetic result;
+- make only the exact world-root Heads branch ineligible, then roll `ItemPool_SkinsAndMisc` and require zero head hits while preserving the root's native Quantity/no-drop ratio;
+- never alter `Quantity`, `PoolProbability`, profile ownership, non-cosmetic entries, or foreign pools;
+- restore all 25 captured signatures exactly with a mutation-ownership guard.
 
-PASS requires both dedicated-empty semantics and parent-reroll semantics to be runtime-confirmed.
+PASS here establishes dedicated-empty semantics and broader-source exhaustion propagation without conflating them with attribute-expression mutation. After that, open a separate bounded front for attribute-backed leaf weights.
