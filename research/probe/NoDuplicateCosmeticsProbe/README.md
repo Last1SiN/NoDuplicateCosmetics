@@ -1,28 +1,40 @@
-# NoDuplicateCosmeticsProbe 0.3.1
+# NoDuplicateCosmeticsProbe 0.4.0
 
-Development-only probe for NoDuplicateCosmetics.
+Bounded mutation probe for NoDuplicateCosmetics.
 
-It does not modify loot weights, loot pools, profile data, or unlocked cosmetics. It can deliberately spawn loot from stock cosmetic pools for fast testing.
+This probe deliberately modifies exactly one stock loot-pool leaf entry in memory: the already-unlocked Siren head **Motosaurus** in `ItemPool_Customizations_Heads_Loot_Siren`.
 
-## Keybinds
+It does **not** modify profile data, pool `Quantity`, parent `PoolProbability`, any non-target entry, or any unrelated loot pool.
 
-- NumPad 0: scan all currently loaded inventory balance states and log cosmetic states
-- NumPad 1: dump standard enemy topology plus the world cosmetic selector and all six stock leaf cosmetic pools, including each pool's Quantity initializer
-- NumPad 2: spawn 20 rolls from the stock world cosmetic pool (`ItemPool_SkinsAndMisc`)
-- NumPad 3: spawn 10 head-pool rolls
-- NumPad 4: spawn 10 skin-pool rolls
-- NumPad 5: spawn 10 weapon-skin-pool rolls
-- NumPad 6: spawn 10 weapon-trinket-pool rolls
-- NumPad 7: spawn 10 ECHO-theme-pool rolls
-- NumPad 8: spawn 10 room-decoration-pool rolls
-- NumPad 9: unused
+The probe fails closed unless:
 
-Probe 0.3.1 observes cosmetic balance states through `InventoryBalanceStateComponent:PostBeginPlay` and supports a manual NumPad 0 scan.
+- Motosaurus is reported as already unlocked by the local profile;
+- the exact stock Motosaurus balance is present in the exact Siren head pool;
+- the target `Weight` is a simple constant weight with no DataTable, attribute, or initializer.
 
-Ownership resolution covers:
+Only `Weight.BaseValueConstant` is changed from its captured stock value to `0.0`. All other fields are left untouched. Disable restores the captured value only if the current weight still matches the probe-owned state.
 
-- `OakCustomizationData` through `IsCustomizationUnlocked`
-- `OakInventoryCustomizationPartData` through `IsInventoryCustomizationPartUnlocked`
-- `CrewQuartersDecorationItemData` through `IsCrewQuartersDecorationUnlocked`
+## Test sequence
 
-The direct spawner exists only to accelerate development. It is not planned for the production mod.
+Wait until fully in-game.
+
+1. NumPad 0 — inspect target and capture stock weight.
+2. NumPad 1 — spawn 96 baseline rolls from the exact Siren head pool.
+3. Wait 2–3 seconds, then NumPad 2 — baseline summary.
+4. NumPad 3 — apply Motosaurus exclusion.
+5. NumPad 4 — spawn 96 filtered rolls.
+6. Wait 2–3 seconds, then NumPad 5 — filtered summary.
+7. NumPad 6 — restore the exact captured target weight.
+8. NumPad 7 — spawn 96 restored rolls.
+9. Wait 2–3 seconds, then NumPad 8 — restored summary.
+10. NumPad 9 — verify current target weight at any time.
+
+Expected success pattern:
+
+- baseline: Motosaurus appears at least once;
+- filtered: Motosaurus appears zero times;
+- filtered observed-result count remains comparable to baseline, showing that the resolver redistributes selection among remaining positive entries instead of converting the removed weight into a no-drop slot;
+- restored: Motosaurus can appear again;
+- `RESTORE PASS exact weight signature restored` is logged.
+
+This is not a release build.
