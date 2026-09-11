@@ -1,13 +1,13 @@
 [project]
 name = "NoDuplicateCosmeticsProbe"
-version = "0.5.0"
-description = "Bounded BL3 probe for recursive owned-cosmetic filtering under the stock world cosmetic root."
+version = "0.7.1"
+description = "Fully automatic BL3 probe for attribute-backed cosmetic leaf exclusion semantics."
 authors = [{ name = "Sol / GPT-5.6 Sol" }]
 maintainers = [{ name = "Last1SiN" }]
 
 [tool.sdkmod]
 name = "NoDuplicateCosmeticsProbe"
-version = "0.5.0"
+version = "0.7.1"
 license = { name = "GPL3", url = "https://choosealicense.com/licenses/gpl-3.0/" }
 coop_support = "Unknown"
 supported_games = ["BL3"]
