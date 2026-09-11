@@ -12,6 +12,8 @@ from unrealsdk.unreal import BoundFunction, UObject, WrappedStruct
 
 assert Game.get_current() is Game.BL3, "NoDuplicateCosmetics supports Borderlands 3 only"
 
+logging.info("[NoDuplicateCosmetics] LOADED candidate=0.1.2")
+
 HUD_FRAME = "/Script/Engine.HUD:ReceiveDrawHUD"
 WORLD_POOL_PATH = (
     "/Game/GameData/Loot/ItemPools/ItemPool_SkinsAndMisc."
@@ -37,6 +39,7 @@ _pc_identity: tuple[str, int | None] | None = None
 _ready_since: float | None = None
 _last_refresh = 0.0
 _reported_errors: set[str] = set()
+_startup_reported = False
 
 
 def _path(obj: Any) -> str:
@@ -631,7 +634,30 @@ def _refresh() -> None:
                 _restore_all()
                 return
 
-    _reconcile()
+    global _startup_reported
+
+    if not _reconcile():
+        return
+
+    if not _startup_reported:
+        owned_leaves = 0
+        for record in _leaf_records.values():
+            try:
+                if _owned(record["balance_path"]) is True:
+                    owned_leaves += 1
+            except Exception:
+                pass
+
+        filtered_leaves = sum(1 for key in _managed if key[2] == "leaf")
+        exhausted_edges = sum(1 for key in _managed if key[2] == "edge")
+        logging.info(
+            "[NoDuplicateCosmetics] READY candidate=0.1.2 "
+            f"pools={len(_pool_nodes)} leaves={len(_leaf_records)} "
+            f"mapped={len(_customization_by_balance)} owned={owned_leaves} "
+            f"filtered_leaves={filtered_leaves} exhausted_edges={exhausted_edges} "
+            f"blocked={len(_blocked_keys)}"
+        )
+        _startup_reported = True
 
 
 def _player_identity() -> tuple[str, int | None] | None:
@@ -696,6 +722,7 @@ def _hud_frame(
 
 def on_enable() -> None:
     global _root_pool, _graph_ready, _pc_identity, _ready_since, _last_refresh
+    global _startup_reported
 
     _root_pool = None
     _graph_ready = False
@@ -708,6 +735,8 @@ def on_enable() -> None:
     _pc_identity = None
     _ready_since = None
     _last_refresh = 0.0
+    _startup_reported = False
+    logging.info("[NoDuplicateCosmetics] ENABLED candidate=0.1.2 waiting_for_player")
 
 
 def on_disable() -> None:
