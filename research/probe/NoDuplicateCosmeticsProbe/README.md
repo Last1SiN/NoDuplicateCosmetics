@@ -1,40 +1,37 @@
-# NoDuplicateCosmeticsProbe 0.4.0
+# NoDuplicateCosmeticsProbe 0.5.0
 
-Bounded mutation probe for NoDuplicateCosmetics.
+Bounded recursive world-cosmetic mutation probe for NoDuplicateCosmetics.
 
-This probe deliberately modifies exactly one stock loot-pool leaf entry in memory: the already-unlocked Siren head **Motosaurus** in `ItemPool_Customizations_Heads_Loot_Siren`.
+Scope is deliberately limited to the vanilla `ItemPool_SkinsAndMisc` graph. The probe recursively discovers only pools reachable from that exact root, resolves all direct cosmetic leaves through the three runtime-confirmed ownership APIs, and zeros only already-owned leaf entries which use a simple positive constant weight.
 
-It does **not** modify profile data, pool `Quantity`, parent `PoolProbability`, any non-target entry, or any unrelated loot pool.
+It does not change any `Quantity`, parent `PoolProbability`, non-cosmetic entry, profile data, or foreign loot pool. If a reachable direct leaf pool would become completely empty, or if an owned leaf cannot be resolved safely, the whole mutation plan fails closed before any write is made. Parent exhaustion behavior is a later boundary.
 
-The probe fails closed unless:
-
-- Motosaurus is reported as already unlocked by the local profile;
-- the exact stock Motosaurus balance is present in the exact Siren head pool;
-- the target `Weight` is a simple constant weight with no DataTable, attribute, or initializer.
-
-Only `Weight.BaseValueConstant` is changed from its captured stock value to `0.0`. All other fields are left untouched. Disable restores the captured value only if the current weight still matches the probe-owned state.
+The profile scan is lazy. Probe 0.4.0 showed that early module-enable ownership queries can be false before the normal player/profile state is ready.
 
 ## Test sequence
 
 Wait until fully in-game.
 
-1. NumPad 0 — inspect target and capture stock weight.
-2. NumPad 1 — spawn 96 baseline rolls from the exact Siren head pool.
-3. Wait 2–3 seconds, then NumPad 2 — baseline summary.
-4. NumPad 3 — apply Motosaurus exclusion.
-5. NumPad 4 — spawn 96 filtered rolls.
-6. Wait 2–3 seconds, then NumPad 5 — filtered summary.
-7. NumPad 6 — restore the exact captured target weight.
-8. NumPad 7 — spawn 96 restored rolls.
-9. Wait 2–3 seconds, then NumPad 8 — restored summary.
-10. NumPad 9 — verify current target weight at any time.
+1. NumPad 0 — build/log the recursive world ownership plan.
+2. NumPad 1 — spawn 384 baseline world-cosmetic requests.
+3. Wait 3–5 seconds, NumPad 2 — baseline summary.
+4. NumPad 3 — apply all safe owned-leaf exclusions.
+5. NumPad 4 — spawn 384 filtered world-cosmetic requests.
+6. Wait 3–5 seconds, NumPad 5 — filtered summary.
+7. NumPad 6 — guarded exact restore.
+8. NumPad 7 — spawn 384 restored requests.
+9. Wait 3–5 seconds, NumPad 8 — restored summary.
+10. NumPad 9 — verify every captured weight.
 
-Expected success pattern:
+Send `unrealsdk.log`.
 
-- baseline: Motosaurus appears at least once;
-- filtered: Motosaurus appears zero times;
-- filtered observed-result count remains comparable to baseline, showing that the resolver redistributes selection among remaining positive entries instead of converting the removed weight into a no-drop slot;
-- restored: Motosaurus can appear again;
-- `RESTORE PASS exact weight signature restored` is logged.
+Success criteria:
+
+- plan resolves without blockers;
+- baseline contains one or more `owned_hits`;
+- filtered has `owned_hits=0`;
+- filtered observed ratio remains statistically comparable to baseline, showing that owned-leaf filtering did not remove the stock root's native Quantity/no-drop behavior;
+- restore reports exact signatures restored;
+- restored owned hits return.
 
 This is not a release build.
