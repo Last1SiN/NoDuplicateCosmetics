@@ -2,7 +2,7 @@
 
 Borderlands 3 PythonSDK mod in development.
 
-Goal: prevent already-unlocked cosmetics from being selected again while preserving the semantics of the original loot source.
+Goal: prevent already-unlocked cosmetics from being selected again while preserving the semantics and reachability of the original loot source.
 
 ## Current research contract
 
@@ -10,11 +10,12 @@ The mod must not blindly delete cosmetic pickups or globally convert cosmetic ro
 
 For each source we first classify the loot topology:
 
-- **Independent cosmetic roll** — if cosmetics are a separate `FItemPoolInfo` entry with their own `PoolProbability`, an owned cosmetic must be rerolled inside the same cosmetic pool. Weapon/gear probabilities stay untouched.
-- **Shared weighted pool** — if cosmetic balances compete directly with weapon/gear balances inside one pool, an owned cosmetic is removed from the eligible weighted set and the original roll resolves among the remaining entries.
-- **Dedicated cosmetic source** — reroll only among eligible unowned cosmetics from that source.
+- **Independent cosmetic roll** — if cosmetics are a separate `FItemPoolInfo` entry with their own `PoolProbability`, an owned cosmetic may be rerolled only among still-unlocked cosmetics that are actually reachable from that exact source. If that source has no reachable unowned cosmetic left, its cosmetic roll produces no drop. Weapon/gear probabilities stay untouched.
+- **Shared weighted pool** — if cosmetic balances compete directly with weapon/gear balances inside one pool, an owned cosmetic is removed from the eligible weighted set and the original roll resolves among the remaining entries. No extra roll is added.
+- **Dedicated cosmetic source / pool** — reroll only among still-unlocked cosmetics belonging to that exact drop pool. Never broaden the candidate set to cosmetics which cannot normally drop from that pool.
+- **Nested/list-based source** — preserve source reachability at every level. Pool exhaustion may propagate upward only far enough to prevent a successful parent branch from resolving into an empty child.
 
-If a source has no eligible unowned cosmetics left, fallback behavior will be defined only after the source topology is verified in runtime; development must not silently invent extra weapon drops.
+Core invariant: NoDuplicateCosmetics may reduce duplicate cosmetic output, but it must not make an item obtainable from a source which could not drop that item in vanilla.
 
 ## Status
 
