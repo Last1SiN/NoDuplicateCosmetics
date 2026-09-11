@@ -120,8 +120,13 @@ def _dump_pool_data(label: str, pool: UObject) -> None:
     except Exception as exc:
         logging.info(f"[NoDuplicateCosmeticsProbe] POOL {label}: no readable BalancedItems: {exc}")
         return
+    try:
+        quantity = _initializer_text(pool.Quantity)
+    except Exception:
+        quantity = "<unreadable>"
     logging.info(
-        f"[NoDuplicateCosmeticsProbe] POOL {label} path={_path(pool)} balanced_count={len(entries)}"
+        f"[NoDuplicateCosmeticsProbe] POOL {label} path={_path(pool)} "
+        f"balanced_count={len(entries)} quantity={quantity}"
     )
     for idx, entry in enumerate(entries):
         try:
@@ -228,6 +233,16 @@ def _match_customization_data(balance: UObject) -> tuple[str, UObject | None]:
     except Exception:
         pass
 
+    try:
+        for candidate in unrealsdk.find_all("CrewQuartersDecorationItemData", exact=False):
+            try:
+                if candidate.BalanceData is balance or _path(candidate.BalanceData) == _path(balance):
+                    return "CrewQuartersDecorationItemData", candidate
+            except Exception:
+                continue
+    except Exception:
+        pass
+
     return "<unmatched>", None
 
 
@@ -245,6 +260,8 @@ def _owned(kind: str, data: UObject | None) -> str:
             return "YES" if bool(pc.IsCustomizationUnlocked(data)) else "NO"
         if kind == "OakInventoryCustomizationPartData":
             return "YES" if bool(pc.IsInventoryCustomizationPartUnlocked(data)) else "NO"
+        if kind == "CrewQuartersDecorationItemData":
+            return "YES" if bool(pc.IsCrewQuartersDecorationUnlocked(data)) else "NO"
     except Exception as exc:
         return f"ERROR:{exc}"
     return "UNKNOWN"
@@ -356,7 +373,7 @@ def _spawn_pool(label: str, count: int) -> None:
 
 @keybind(
     "Scan Loaded Cosmetic States",
-    "F4",
+    "NumPadZero",
     display_name="Scan loaded cosmetic balance states",
     description="Logs all currently loaded cosmetic InventoryBalanceStateComponent objects.",
 )
@@ -366,7 +383,7 @@ def _kb_scan_states() -> None:
 
 @keybind(
     "Dump Loot Topology",
-    "F5",
+    "NumPadOne",
     display_name="Dump standard enemy + cosmetic pool topology",
     description="Logs standard enemy pool entries and the world cosmetic sub-pools.",
 )
@@ -374,37 +391,37 @@ def _kb_dump_topology() -> None:
     _dump_topology()
 
 
-@keybind("Spawn World Cosmetics x20", "F6")
+@keybind("Spawn World Cosmetics x20", "NumPadTwo")
 def _kb_world() -> None:
     _spawn_pool("world_cosmetics", 20)
 
 
-@keybind("Spawn Heads x10", "F7")
+@keybind("Spawn Heads x10", "NumPadThree")
 def _kb_heads() -> None:
     _spawn_pool("heads", 10)
 
 
-@keybind("Spawn Skins x10", "F8")
+@keybind("Spawn Skins x10", "NumPadFour")
 def _kb_skins() -> None:
     _spawn_pool("skins", 10)
 
 
-@keybind("Spawn Weapon Skins x10", "F9")
+@keybind("Spawn Weapon Skins x10", "NumPadFive")
 def _kb_weapon_skins() -> None:
     _spawn_pool("weapon_skins", 10)
 
 
-@keybind("Spawn Trinkets x10", "F10")
+@keybind("Spawn Trinkets x10", "NumPadSix")
 def _kb_trinkets() -> None:
     _spawn_pool("trinkets", 10)
 
 
-@keybind("Spawn ECHO Themes x10", "F11")
+@keybind("Spawn ECHO Themes x10", "NumPadSeven")
 def _kb_echo() -> None:
     _spawn_pool("echo", 10)
 
 
-@keybind("Spawn Room Decorations x10", "F12")
+@keybind("Spawn Room Decorations x10", "NumPadEight")
 def _kb_room_deco() -> None:
     _spawn_pool("room_deco", 10)
 
