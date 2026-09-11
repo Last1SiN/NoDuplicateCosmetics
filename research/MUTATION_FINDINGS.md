@@ -15,15 +15,34 @@ The bounded Motosaurus experiment establishes the following runtime facts for a 
 
 Full evidence: `research/results/owned-weight-exclusion-0.4.0.md`.
 
+## 0.5.0 recursive stock-world owned filter
+
+Verdict: **PASS for the tested stock world graph and currently-owned leaves**.
+
+Runtime facts:
+
+1. Recursive traversal from the exact vanilla `ItemPool_SkinsAndMisc` root resolved 20 reachable pools and 139 cosmetic leaf entries.
+2. The test profile had one owned leaf among those 139: Siren head `Motosaurus`.
+3. Baseline: 384 requests -> 153 observed cosmetics (`0.3984`), one owned hit, zero unresolved hits.
+4. Filtered: 384 requests -> 154 observed cosmetics (`0.4010`), zero owned hits, zero unresolved hits.
+5. The essentially unchanged observed ratio establishes that source-local leaf exclusion does not disturb the world root's native `Quantity`/no-drop behavior when the containing child pool remains non-empty.
+6. Guarded exact restore passed; post-restore manual verification reported `good=1 bad=0`.
+7. The restored random batch did not happen to roll Motosaurus again; this does not contradict restore because the exact captured signature was independently verified after restore.
+
+Full evidence: `research/results/world-owned-filter-0.5.0.md`.
+
 ## Next boundary
 
-The next probe may expand from one direct leaf to the stock world-cosmetic graph, but it must retain these constraints:
+The remaining stock-world mutation boundary is **pool/category exhaustion propagation**.
 
-- ownership-driven only;
-- source-local reachability only;
-- no changes to `Quantity` or parent `PoolProbability`;
-- no new entries and no redirection to foreign pools;
-- capture before mutation;
-- ownership-guarded exact restore;
-- delayed/lazy ownership evaluation after local profile readiness;
-- explicit test of nested child-pool exhaustion before production generalization.
+A bounded synthetic exhaustion experiment is permitted because its purpose is to establish resolver semantics, not to model profile ownership. It must:
+
+- choose one exact vanilla cosmetic child pool reachable from `ItemPool_SkinsAndMisc`;
+- capture every touched leaf and parent-edge weight before mutation;
+- first prove that directly rolling the fully exhausted dedicated child pool produces no replacement cosmetic;
+- then make that exhausted child branch ineligible in the broader world root and prove the parent continues to resolve among its remaining source-local branches;
+- preserve the world root's original `Quantity`/no-drop behavior;
+- never add entries or redirect to foreign pools;
+- restore every touched signature exactly and ownership-guard the restore.
+
+Only after this boundary passes should the implementation generalize exhaustion propagation recursively or expand to arbitrary dedicated/mission/shared sources.
