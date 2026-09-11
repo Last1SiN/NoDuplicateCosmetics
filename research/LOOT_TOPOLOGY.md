@@ -1,6 +1,6 @@
 # Loot topology research
 
-Status: standard world topology and primary ownership APIs runtime-confirmed; room-decoration ownership and pool Quantity verification pending probe 0.3.1.
+Status: standard world topology and all six stock world-drop cosmetic ownership categories runtime-confirmed; native world-cosmetic no-drop semantics source-confirmed and runtime-observed. Generic source-local mutation design remains pending.
 
 ## Production invariant
 
@@ -54,22 +54,34 @@ For this topology the desired behavior is:
 
 ## Ownership resolution
 
-Probe 0.3.0 runtime-confirmed two ownership paths:
+Runtime-confirmed ownership mappings:
 
 - `OakCustomizationData` -> `AOakPlayerController.IsCustomizationUnlocked(...)`
 - `OakInventoryCustomizationPartData` -> `AOakPlayerController.IsInventoryCustomizationPartUnlocked(...)`
+- `CrewQuartersDecorationItemData` -> `AOakPlayerController.IsCrewQuartersDecorationUnlocked(...)`
 
-Both `owned=NO` and `owned=YES` were observed in runtime. A stock head (`Motosaurus`) resolved through `OakCustomizationData` and returned `owned=YES`, proving that the profile query can distinguish an already-unlocked world-drop cosmetic.
+Both `owned=NO` and `owned=YES` were observed for the primary customization path. A stock head (`Motosaurus`) resolved through `OakCustomizationData` and returned `owned=YES`, proving that the profile query can distinguish an already-unlocked world-drop cosmetic.
 
-Weapon skins and weapon trinkets resolved through `OakInventoryCustomizationPartData`. Character heads, character skins, and ECHO themes resolved through `OakCustomizationData`.
+Category mapping is now runtime-confirmed across all six stock world-drop branches:
 
-Room decorations were the only tested stock world-drop category which remained unmatched in probe 0.3.0. Source inspection identifies the corresponding data type as `CrewQuartersDecorationItemData`, which carries `BalanceData`/`InventoryData`, and `AOakPlayerController` exposes `IsCrewQuartersDecorationUnlocked(...)`. Probe 0.3.1 adds this third mapping for runtime validation.
+- Character heads -> `OakCustomizationData`
+- Character skins -> `OakCustomizationData`
+- ECHO themes -> `OakCustomizationData`
+- Weapon skins -> `OakInventoryCustomizationPartData`
+- Weapon trinkets -> `OakInventoryCustomizationPartData`
+- Room decorations -> `CrewQuartersDecorationItemData`
+
+Probe 0.3.2 confirmed room-decoration resolution with real world and direct room-decoration rolls; the earlier `owned=UNKNOWN` state from 0.3.0 is closed.
 
 ## Native no-drop behavior
 
-In the 0.3.0 run, 20 direct requests against `ItemPool_SkinsAndMisc` produced fewer than 20 observed cosmetic balance states before the next batch began. This is evidence that directly rolling the stock world cosmetic pool does not necessarily guarantee an item. It is not yet sufficient to assign the exact cause or effective probability.
+Runtime repeatedly shows that direct requests against `ItemPool_SkinsAndMisc` do not guarantee one cosmetic per request. In the 0.3.2 run, 20 direct world-cosmetic requests produced 12 observed cosmetic balance states before the next batch.
 
-Probe 0.3.1 therefore logs each tested pool's `Quantity` initializer. Production filtering must preserve the source's existing quantity/no-drop semantics rather than force a replacement item whenever a cosmetic branch is entered.
+Source evidence independently identifies the cause: the stock `ItemPool_SkinsAndMisc.Quantity` uses `/Game/GameData/Loot/ItemPools/Init_RandomLootCount_Normal`, which can evaluate below 1. Apocalyptech's Expanded Customization Pools explicitly replaces that `Quantity` with constant `1` to guarantee a cosmetic whenever the pool is rolled.
+
+Therefore production filtering must leave the source pool's `Quantity` untouched. Owned-cosmetic filtering must operate on candidate eligibility/weights without converting a native no-drop result into a guaranteed item.
+
+The 0.3.2 log did not contain a NumPad 1 topology/Quantity dump, so the exact live runtime initializer values from that run were not captured. This no longer blocks the semantic conclusion above, but the live dump may still be useful as an implementation sanity check.
 
 ## Other source topologies
 
@@ -79,9 +91,22 @@ Other sources must be classified before production mutation:
 - Dedicated cosmetic pools: reroll only among still-unlocked cosmetics that belong to that exact drop pool. If that pool contains no eligible unowned cosmetic, it produces no replacement cosmetic.
 - Nested/list-based sources: preserve the original reachability graph. Pool exhaustion may propagate upward only as far as required to prevent a successful parent roll from resolving to an empty child; it must not broaden eligibility to sibling/foreign pools which the source did not reference.
 
+## Candidate mutation direction
+
+The preferred next experiment is pre-selection eligibility mutation, not post-spawn deletion:
+
+- retain every source's original graph, `Quantity`, `PoolProbability`, and non-cosmetic entries;
+- mark only already-owned cosmetic leaf entries ineligible;
+- propagate exhaustion upward only when a child branch can no longer produce any eligible result;
+- never add entries or redirect to foreign pools;
+- restore exact original weight data on disable;
+- verify with direct stock-pool spawning before attempting generic all-source coverage.
+
+The key unresolved implementation question is whether the game normalizes remaining `BalancedItems` weights after owned entries are made ineligible in the way required for source-local reroll semantics. That must be established with a bounded mutation probe before production implementation.
+
 ## Runtime probe
 
-Probe 0.3.1 uses NumPad bindings to avoid conflicts with game/platform function keys:
+Probe 0.3.2 uses fixed, non-persistent NumPad bindings so saved F-key settings cannot override the diagnostic defaults:
 
 - NumPad 0: scan loaded cosmetic balance states.
 - NumPad 1: dump standard enemy topology and the seven tested cosmetic pools, including `Quantity`.
