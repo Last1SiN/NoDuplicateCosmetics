@@ -1,0 +1,13 @@
+[project]
+name = "NoDuplicateCosmeticsProbe"
+version = "0.3.0"
+description = "Development probe for BL3 cosmetic ownership and loot-pool topology."
+authors = [{ name = "Sol / GPT-5.6 Sol" }]
+maintainers = [{ name = "Last1SiN" }]
+
+[tool.sdkmod]
+name = "NoDuplicateCosmeticsProbe"
+version = "0.3.0"
+license = { name = "GPL3", url = "https://choosealicense.com/licenses/gpl-3.0/" }
+coop_support = "Unknown"
+supported_games = ["BL3"]
