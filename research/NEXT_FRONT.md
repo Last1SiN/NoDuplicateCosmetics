@@ -1,27 +1,42 @@
 # Next bounded front
 
-The constant-only head exhaustion experiment is almost closed. Do **not** repeat the full mutation sequence.
+The attribute-backed leaf exclusion boundary is now closed.
 
-0.6.3 established:
+## Confirmed runtime contracts
 
-- all 24 direct stock character-head leaves are simple positive constants;
-- the exact `ItemPool_SkinsAndMisc -> Heads` edge is a simple constant;
-- all 25 targeted signatures can be zeroed and restored exactly;
-- a 64-request direct Siren baseline produced 64 heads;
-- the subsequent 64-request exhausted Siren batch emitted no cosmetic/head events before the next batch began;
-- the propagated world batch produced `160/384` cosmetics (`0.4167`) with `head_hits=0` and `siren_hits=0`;
-- exact restore passed for all 25 signatures.
+1. Simple constant direct cosmetic leaves can be excluded by setting `Weight.BaseValueConstant = 0`.
+2. Remaining positive sibling weights are renormalized by the native resolver rather than turning the removed leaf weight into a new no-drop slot.
+3. Source-root `Quantity` must remain untouched so native no-drop behavior is preserved.
+4. Dedicated cosmetic pools which have no eligible leaves produce no replacement cosmetic.
+5. Exhausted source-local branches can be removed from a broader source so the broader native resolver chooses only among the source's remaining reachable branches.
+6. Attribute-backed direct cosmetic leaves cannot be excluded by zeroing `BaseValueConstant` alone.
+7. For the runtime-confirmed shape with positive `BaseValueConstant`, non-null `BaseValueAttribute`, null `AttributeInitializer`, no DataTable, and positive `BaseValueScale`, exclusion requires both `BaseValueConstant = 0` and `BaseValueScale = 0`, while preserving the attribute pointer and all other fields.
+8. Exact guarded restore of mutated signatures has passed for both constant-only and attribute-backed cases.
 
-The only strict evidence missing is the same-run world baseline ratio because console step 2 was skipped before the next batch reset the counters.
+## Current front: first production-shaped filter
 
-## Minimal recovery
+Build a production-shaped source-local filter over the stock `ItemPool_SkinsAndMisc` graph, without the diagnostic spawner.
 
-After the successful restore, run only:
+Required behavior:
 
-1. `ndcprobe 1`
-2. wait 3–5 seconds
-3. `ndcprobe 2`
+- wait lazily until local profile/player ownership queries are authoritative;
+- traverse only pools reachable from the exact stock world-cosmetic root;
+- resolve direct cosmetic leaves through the three confirmed ownership APIs;
+- classify each leaf weight by runtime shape;
+- for owned simple-constant leaves, zero only `BaseValueConstant`;
+- for owned attribute-backed leaves matching the proven contract, zero both `BaseValueConstant` and `BaseValueScale`;
+- fail closed on DataTable-backed, AttributeInitializer-backed, unresolved, or otherwise unproven weight shapes;
+- propagate child exhaustion upward only through source-local edges whose mutation semantics are proven;
+- preserve `Quantity`, `PoolProbability`, non-cosmetic entries, and all foreign pools;
+- keep exact captured signatures and restore only when the current live state still matches the mod-owned filtered state;
+- refresh after ownership changes so a cosmetic learned during the same session becomes ineligible without restarting the game;
+- no normal-operation info/debug spam in the release-shaped candidate.
 
-Compare that clean baseline ratio against propagated `0.4167`. If comparable, close broader-source exhaustion propagation as PASS.
+## Still outside this front
 
-Do not mutate attribute-backed weights in this recovery. After closure, open a separate bounded front for attribute-backed leaf eligibility/exclusion semantics (for example the ECHO rarity-weight case discovered by 0.6.0).
+- generic discovery of every mission/dedicated/container cosmetic source in the whole game;
+- DataTable-backed and `AttributeInitializer`-backed weight mutation;
+- multiplayer authority/client behavior;
+- compatibility arbitration when another mod mutates the same exact weight after NoDuplicateCosmetics.
+
+The purpose of the next build is to convert the proven world-graph mechanics into the first production-shaped implementation, then validate it with ordinary gameplay drops before broadening source coverage.
