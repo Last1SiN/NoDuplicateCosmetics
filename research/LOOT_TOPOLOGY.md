@@ -1,6 +1,6 @@
 # Loot topology research
 
-Status: source-confirmed, runtime probe pending.
+Status: standard world-drop topology runtime-confirmed; ownership-resolution probe still pending.
 
 ## Production invariant
 
@@ -10,7 +10,7 @@ NoDuplicateCosmetics must preserve both the semantics and the reachability of th
 
 `ItemPoolList_StandardEnemyGunsandGear` contains separate `FItemPoolInfo` entries. Each entry has its own `ItemPool`, `PoolProbability`, and `NumberOfTimesToSelectFromThisPool`.
 
-Known base-game indices from existing BL3 loot research:
+Runtime probe 0.2.0 confirmed the base-game list has 11 entries:
 
 - 0 health
 - 1 needed ammo
@@ -24,9 +24,11 @@ Known base-game indices from existing BL3 loot research:
 - 9 cosmetics
 - 10 eridium
 
+The runtime dump confirmed that index 4 points to `ItemPool_Guns_All`, while index 9 independently points to `ItemPool_SkinsAndMisc`. Each entry owns its own `PoolProbability`; the cosmetic probability is driven by `Att_PlayerHeads_DropOdds`.
+
 Therefore the normal cosmetic world-drop roll is independent from the gun roll. Rejecting an already-owned cosmetic must not create an extra gun; doing so would increase the vanilla weapon drop rate.
 
-The cosmetic entry points to `ItemPool_SkinsAndMisc`. That pool is itself a weighted selector over six cosmetic sub-pools:
+The runtime dump also confirmed that `ItemPool_SkinsAndMisc` contains exactly six weighted child pools, each with stock `BaseValueConstant ~= 0.05`:
 
 0. Heads
 1. Skins
@@ -51,13 +53,26 @@ Other sources must be classified before production mutation:
 - Dedicated cosmetic pools: reroll only among still-unlocked cosmetics that belong to that exact drop pool. If that pool contains no eligible unowned cosmetic, it produces no replacement cosmetic.
 - Nested/list-based sources: preserve the original reachability graph. Pool exhaustion may propagate upward only as far as required to prevent a successful parent roll from resolving to an empty child; it must not broaden eligibility to sibling/foreign pools which the source did not reference.
 
-## Runtime probe
+## Probe 0.2.0 result
 
-Development probe v0.2.0 adds:
+The 2026-09-11 runtime session successfully dumped the standard enemy topology and `ItemPool_SkinsAndMisc`, and direct dev-spawn calls were issued for:
 
-- F5: dump standard enemy list and `ItemPool_SkinsAndMisc` topology.
-- F6: spawn 20 rolls from the stock world cosmetic pool.
-- F7-F12: targeted stock pool rolls for heads, skins, weapon skins, trinkets, ECHO themes, and room decorations.
-- Per-pickup logging of balance, inventory data, resolved customization object, ownership result, and customization-part list.
+- world cosmetics
+- heads
+- weapon skins
+- weapon trinkets
+- room decorations
+
+However, the `InventoryItemPickup:ActivatePickup` observation path produced no `COSMETIC` records. Therefore ownership mapping is not yet runtime-confirmed from this session. The topology result is valid; the pickup-observation mechanism is the part which failed to capture instantiated cosmetic balance states.
+
+## Probe 0.3.0 plan
+
+Probe 0.3.0 changes observation without changing loot:
+
+- hook `InventoryBalanceStateComponent:PostBeginPlay`, which is a more direct lifecycle point for created inventory balance states;
+- add an F4 manual scan over all loaded `InventoryBalanceStateComponent` objects;
+- recognize cosmetics both by `CustomizationInventoryData` and `CustomizationInventoryBalanceData`;
+- dump all six leaf cosmetic pools, not only `ItemPool_SkinsAndMisc`;
+- keep F6-F12 as direct stock-pool spawners for development only.
 
 The direct spawner is development-only and must not ship in the production mod.
