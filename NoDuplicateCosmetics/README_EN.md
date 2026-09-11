@@ -1,4 +1,4 @@
-# NoDuplicateCosmetics 0.1.0 Candidate
+# NoDuplicateCosmetics 0.1.2 Candidate
 
 First production-shaped candidate for Borderlands 3.
 
@@ -44,5 +44,17 @@ enable it in the Mod Menu.
 
 The underlying world-pool, ownership, leaf exclusion, exhausted-pool propagation, and
 attribute-backed exclusion mechanics were validated with bounded runtime probes.
-This 0.1.0 package is the first release-shaped integration candidate and still needs
+This 0.1.2 package is the first release-shaped integration candidate and still needs
 ordinary gameplay validation before public release.
+
+## Candidate diagnostics
+
+This validation candidate emits only three normal informational lines:
+`LOADED` on module import, `ENABLED` when the package is enabled, and one `READY`
+verdict after the first successful ownership/filter reconcile. Periodic refreshes
+remain silent unless an error occurs.
+
+The three states are intentionally distinguishable:
+- no `LOADED`: the `.sdkmod` was not discovered/imported;
+- `LOADED` but no `ENABLED`: the mod exists but is disabled;
+- `LOADED` + `ENABLED` + `READY`: the production filter initialized successfully.
