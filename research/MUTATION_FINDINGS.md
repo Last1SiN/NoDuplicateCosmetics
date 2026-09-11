@@ -41,18 +41,29 @@ This establishes a new production boundary: cosmetic leaf weights are not unifor
 
 Full evidence: `research/results/pool-exhaustion-0.6.0.md`.
 
-## Next boundary
+## 0.6.3 constant-only head exhaustion
 
-Continue the **pool/category exhaustion propagation** experiment with a constant-only synthetic target rather than broadening mutation semantics prematurely.
+Verdict: **PARTIAL PASS; minimal baseline recovery still required for strict same-run ratio proof**.
 
-Use the stock character-head leaf pools:
+Runtime facts established:
 
-- fail-closed validate all 24 direct class-head leaves as simple positive constants;
-- zero those leaves only for the synthetic exhaustion experiment;
-- leave the attribute-driven intermediate Heads->class selector untouched;
-- directly roll the exhausted Siren head pool and require zero cosmetic results;
-- zero only the exact simple `ItemPool_SkinsAndMisc -> Heads` edge for world propagation;
-- roll the world root and require zero head hits while preserving the root Quantity/no-drop ratio;
-- restore every captured leaf and root-edge signature exactly.
+1. All 24 direct stock character-head leaves were runtime-confirmed simple positive constant weights.
+2. The exact `ItemPool_SkinsAndMisc -> Heads` edge was a simple constant weight around `0.05`.
+3. The synthetic mutation zeroed all 24 leaf weights plus the one world-root Heads edge, and verification reported `good=25 bad=0`.
+4. The direct Siren baseline batch produced 64 head results from 64 requests.
+5. The 64-request exhausted Siren batch produced no logged cosmetic/head results before the next batch began. Step 7 summary was skipped, so formal `observed=0` was not captured, but the event stream strongly supports dedicated-empty -> no replacement cosmetic.
+6. The propagated world batch produced 160 cosmetics from 384 requests (`0.4167`) with `head_hits=0` and `siren_hits=0`; other source-local branches continued to resolve.
+7. Exact guarded restore passed for all 25 captured signatures (`good=25 bad=0`).
+8. Step 2 was skipped, so the same-run world baseline ratio is missing. Prior 0.5.0 baseline (`0.3984`) is consistent with the propagated `0.4167`, but cross-run comparison is supporting rather than strict PASS evidence.
 
-Only after exhaustion propagation itself passes should attribute-backed leaf-weight exclusion become a separate bounded front.
+Full evidence: `research/results/head-exhaustion-0.6.3.md`.
+
+## Immediate recovery boundary
+
+Do not repeat the full mutation test. Because 0.6.3 restored all 25 signatures exactly, capture only a clean post-restore world baseline:
+
+- `ndcprobe 1`
+- wait 3–5 seconds
+- `ndcprobe 2`
+
+If that baseline ratio is comparable to `0.4167`, the broader-source propagation part can be closed as PASS. Dedicated-empty semantics already have strong event-stream evidence; a formal step-7 summary may be captured later if desired, but it is not necessary to redo the full sequence before advancing to the separate attribute-backed-weight front.
