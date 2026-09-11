@@ -1,28 +1,36 @@
 # NoDuplicateCosmetics
 
-Borderlands 3 PythonSDK mod in development.
+Research and implementation repository for a Borderlands 3 SDK mod which prevents already-owned cosmetics from being selected by supported loot sources while preserving the original source-local loot graph.
 
-Goal: prevent already-unlocked cosmetics from being selected again while preserving the semantics and reachability of the original loot source.
+## Core invariant
 
-## Current research contract
+NoDuplicateCosmetics must preserve both the semantics and the reachability of the original loot source. It must not blindly destroy an owned cosmetic after spawn, must not globally convert cosmetic rolls into weapon rolls, and must never introduce a cosmetic which the original source could not drop.
 
-The mod must not blindly delete cosmetic pickups or globally convert cosmetic rolls into weapons.
+## Current implementation front
 
-For each source we first classify the loot topology:
+`implementation/stock-world-filter-v0.1` contains the first production-shaped candidate, version `0.1.0`.
 
-- **Independent cosmetic roll** — if cosmetics are a separate `FItemPoolInfo` entry with their own `PoolProbability`, an owned cosmetic may be rerolled only among still-unlocked cosmetics that are actually reachable from that exact source. If that source has no reachable unowned cosmetic left, its cosmetic roll produces no drop. Weapon/gear probabilities stay untouched.
-- **Shared weighted pool** — if cosmetic balances compete directly with weapon/gear balances inside one pool, an owned cosmetic is removed from the eligible weighted set and the original roll resolves among the remaining entries. No extra roll is added.
-- **Dedicated cosmetic source / pool** — reroll only among still-unlocked cosmetics belonging to that exact drop pool. Never broaden the candidate set to cosmetics which cannot normally drop from that pool.
-- **Nested/list-based source** — preserve source reachability at every level. Pool exhaustion may propagate upward only far enough to prevent a successful parent branch from resolving into an empty child.
+Current scope is deliberately limited to the vanilla world-cosmetic graph rooted at `ItemPool_SkinsAndMisc`.
 
-Core invariant: NoDuplicateCosmetics may reduce duplicate cosmetic output, but it must not make an item obtainable from a source which could not drop that item in vanilla.
+The candidate:
 
-## Status
+- waits lazily for a loaded local player/profile context;
+- resolves ownership through the three runtime-confirmed APIs for character/ECHO cosmetics, weapon cosmetics, and room decorations;
+- filters owned simple-constant leaves with `BaseValueConstant = 0`;
+- filters the runtime-confirmed attribute-backed shape with `BaseValueConstant = 0` and `BaseValueScale = 0` while preserving the attribute pointer;
+- propagates exhausted child pools upward only through the same source-local graph;
+- never changes source `Quantity`, `PoolProbability`, profile data, non-cosmetic entries, or foreign pools;
+- refreshes ownership during the same session so newly learned cosmetics become ineligible without restarting;
+- uses guarded exact restore and does not overwrite a later third-party mutation of the same weight;
+- fails closed on unresolved ownership or unsupported weight shapes.
 
-Source-first feasibility confirmed:
+The implementation contains no development spawner, diagnostic keybinds, console commands, or normal-operation info logging.
 
-- `AOakPlayerController.IsCustomizationUnlocked(...)` exists for standard character customizations.
-- `AOakPlayerController.IsInventoryCustomizationPartUnlocked(...)` exists for inventory customization parts such as weapon skins/trinkets.
-- Standard enemy guns/gear lists contain cosmetics as a separate pool entry with their own probability rather than as a weapon-vs-cosmetic weighted choice.
+## Still outside the current candidate
 
-Runtime probe work is being developed separately before production mutation logic is added.
+- generic coverage of every mission/dedicated/container/DLC-specific cosmetic source;
+- unsupported DataTable-backed or `AttributeInitializer`-backed weight shapes;
+- multiplayer authority/client validation;
+- full compatibility arbitration for mods which rewrite the same loot graph after NoDuplicateCosmetics has already filtered it.
+
+The research evidence and bounded probe results are kept under `research/`.
