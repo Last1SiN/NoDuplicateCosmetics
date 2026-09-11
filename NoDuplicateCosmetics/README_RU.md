@@ -1,4 +1,4 @@
-# NoDuplicateCosmetics 0.1.0 Candidate
+# NoDuplicateCosmetics 0.1.2 Candidate
 
 Первый production-shaped candidate для Borderlands 3.
 
@@ -42,5 +42,17 @@ non-cosmetic entries и foreign pools не меняются.
 ## Статус тестирования
 
 World pool topology, ownership, leaf exclusion, exhaustion propagation и attribute-backed
-exclusion уже прошли bounded runtime probes. Этот пакет 0.1.0 — первая release-shaped
+exclusion уже прошли bounded runtime probes. Этот пакет 0.1.2 — первая release-shaped
 интеграция и требует обычного gameplay validation перед публичным релизом.
+
+## Диагностика candidate
+
+Эта validation-сборка пишет только три обычные INFO-строки:
+`LOADED` при импорте модуля, `ENABLED` при включении пакета и один `READY` verdict после
+первого успешного ownership/filter reconcile. Последующие refresh остаются тихими, если
+нет ошибки.
+
+Состояния различаются однозначно:
+- нет `LOADED`: `.sdkmod` не был обнаружен/импортирован;
+- есть `LOADED`, но нет `ENABLED`: мод найден, но выключен;
+- есть `LOADED` + `ENABLED` + `READY`: production filter успешно инициализирован.
