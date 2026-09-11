@@ -1,6 +1,6 @@
 # Loot topology research
 
-Status: standard world-drop topology runtime-confirmed; ownership-resolution probe still pending.
+Status: standard world topology and primary ownership APIs runtime-confirmed; room-decoration ownership and pool Quantity verification pending probe 0.3.1.
 
 ## Production invariant
 
@@ -10,7 +10,7 @@ NoDuplicateCosmetics must preserve both the semantics and the reachability of th
 
 `ItemPoolList_StandardEnemyGunsandGear` contains separate `FItemPoolInfo` entries. Each entry has its own `ItemPool`, `PoolProbability`, and `NumberOfTimesToSelectFromThisPool`.
 
-Runtime probe 0.2.0 confirmed the base-game list has 11 entries:
+Runtime-confirmed base-game indices:
 
 - 0 health
 - 1 needed ammo
@@ -24,11 +24,9 @@ Runtime probe 0.2.0 confirmed the base-game list has 11 entries:
 - 9 cosmetics
 - 10 eridium
 
-The runtime dump confirmed that index 4 points to `ItemPool_Guns_All`, while index 9 independently points to `ItemPool_SkinsAndMisc`. Each entry owns its own `PoolProbability`; the cosmetic probability is driven by `Att_PlayerHeads_DropOdds`.
-
 Therefore the normal cosmetic world-drop roll is independent from the gun roll. Rejecting an already-owned cosmetic must not create an extra gun; doing so would increase the vanilla weapon drop rate.
 
-The runtime dump also confirmed that `ItemPool_SkinsAndMisc` contains exactly six weighted child pools, each with stock `BaseValueConstant ~= 0.05`:
+The cosmetic entry points to `ItemPool_SkinsAndMisc`. Runtime confirms that this pool is a weighted selector over six cosmetic sub-pools, each with its own stock weight:
 
 0. Heads
 1. Skins
@@ -37,6 +35,14 @@ The runtime dump also confirmed that `ItemPool_SkinsAndMisc` contains exactly si
 4. ECHO themes
 5. Room decorations
 
+The next layer is not uniform:
+
+- Heads and skins each route through four character-specific child pools using character-weight attributes.
+- Weapon skins directly contain balance entries.
+- Weapon trinkets directly contain balance entries.
+- ECHO themes directly contain balance entries.
+- Room decorations route through rarity-specific child pools.
+
 For this topology the desired behavior is:
 
 1. Preserve the original cosmetic `PoolProbability`.
@@ -44,6 +50,26 @@ For this topology the desired behavior is:
 3. If the initially selected cosmetic is already owned, reroll only within that source-local reachable set; never substitute a cosmetic from another source or broader global pool.
 4. If one cosmetic type is exhausted for this source, remove/zero only that exhausted child branch from this source's parent cosmetic selector so another still-eligible branch reachable from the same source can win naturally.
 5. If all cosmetics reachable from that exact source are exhausted, suppress only that independent cosmetic branch: no cosmetic drops and no replacement weapon/gear roll.
+6. Preserve any native no-drop behavior inside the selected cosmetic pool; filtering must not turn a pool which can naturally resolve to no item into a guaranteed cosmetic drop.
+
+## Ownership resolution
+
+Probe 0.3.0 runtime-confirmed two ownership paths:
+
+- `OakCustomizationData` -> `AOakPlayerController.IsCustomizationUnlocked(...)`
+- `OakInventoryCustomizationPartData` -> `AOakPlayerController.IsInventoryCustomizationPartUnlocked(...)`
+
+Both `owned=NO` and `owned=YES` were observed in runtime. A stock head (`Motosaurus`) resolved through `OakCustomizationData` and returned `owned=YES`, proving that the profile query can distinguish an already-unlocked world-drop cosmetic.
+
+Weapon skins and weapon trinkets resolved through `OakInventoryCustomizationPartData`. Character heads, character skins, and ECHO themes resolved through `OakCustomizationData`.
+
+Room decorations were the only tested stock world-drop category which remained unmatched in probe 0.3.0. Source inspection identifies the corresponding data type as `CrewQuartersDecorationItemData`, which carries `BalanceData`/`InventoryData`, and `AOakPlayerController` exposes `IsCrewQuartersDecorationUnlocked(...)`. Probe 0.3.1 adds this third mapping for runtime validation.
+
+## Native no-drop behavior
+
+In the 0.3.0 run, 20 direct requests against `ItemPool_SkinsAndMisc` produced fewer than 20 observed cosmetic balance states before the next batch began. This is evidence that directly rolling the stock world cosmetic pool does not necessarily guarantee an item. It is not yet sufficient to assign the exact cause or effective probability.
+
+Probe 0.3.1 therefore logs each tested pool's `Quantity` initializer. Production filtering must preserve the source's existing quantity/no-drop semantics rather than force a replacement item whenever a cosmetic branch is entered.
 
 ## Other source topologies
 
@@ -53,26 +79,18 @@ Other sources must be classified before production mutation:
 - Dedicated cosmetic pools: reroll only among still-unlocked cosmetics that belong to that exact drop pool. If that pool contains no eligible unowned cosmetic, it produces no replacement cosmetic.
 - Nested/list-based sources: preserve the original reachability graph. Pool exhaustion may propagate upward only as far as required to prevent a successful parent roll from resolving to an empty child; it must not broaden eligibility to sibling/foreign pools which the source did not reference.
 
-## Probe 0.2.0 result
+## Runtime probe
 
-The 2026-09-11 runtime session successfully dumped the standard enemy topology and `ItemPool_SkinsAndMisc`, and direct dev-spawn calls were issued for:
+Probe 0.3.1 uses NumPad bindings to avoid conflicts with game/platform function keys:
 
-- world cosmetics
-- heads
-- weapon skins
-- weapon trinkets
-- room decorations
-
-However, the `InventoryItemPickup:ActivatePickup` observation path produced no `COSMETIC` records. Therefore ownership mapping is not yet runtime-confirmed from this session. The topology result is valid; the pickup-observation mechanism is the part which failed to capture instantiated cosmetic balance states.
-
-## Probe 0.3.0 plan
-
-Probe 0.3.0 changes observation without changing loot:
-
-- hook `InventoryBalanceStateComponent:PostBeginPlay`, which is a more direct lifecycle point for created inventory balance states;
-- add an F4 manual scan over all loaded `InventoryBalanceStateComponent` objects;
-- recognize cosmetics both by `CustomizationInventoryData` and `CustomizationInventoryBalanceData`;
-- dump all six leaf cosmetic pools, not only `ItemPool_SkinsAndMisc`;
-- keep F6-F12 as direct stock-pool spawners for development only.
+- NumPad 0: scan loaded cosmetic balance states.
+- NumPad 1: dump standard enemy topology and the seven tested cosmetic pools, including `Quantity`.
+- NumPad 2: world cosmetics.
+- NumPad 3: heads.
+- NumPad 4: skins.
+- NumPad 5: weapon skins.
+- NumPad 6: weapon trinkets.
+- NumPad 7: ECHO themes.
+- NumPad 8: room decorations.
 
 The direct spawner is development-only and must not ship in the production mod.
