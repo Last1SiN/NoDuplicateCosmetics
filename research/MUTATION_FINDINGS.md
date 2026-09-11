@@ -31,18 +31,28 @@ Runtime facts:
 
 Full evidence: `research/results/world-owned-filter-0.5.0.md`.
 
+## 0.6.0 ECHO exhaustion target
+
+Verdict: **BOUNDED REJECT FOR THIS TARGET; FAIL-CLOSED PASS**.
+
+The first stock ECHO leaf was not constant-only. Its runtime weight contained `BaseValueAttribute=/Game/GameData/Loot/RarityWeighting/Att_RarityWeight_05_Legendary.Att_RarityWeight_05_Legendary` in addition to `BaseValueConstant=1.0` and `BaseValueScale=1.0`. Because 0.6.0 deliberately did not claim safe semantics for attribute-backed weights, it rejected the plan before spawning or mutation. No game state was changed.
+
+This establishes a new production boundary: cosmetic leaf weights are not uniformly constant-only. Attribute-backed leaves require their own source/runtime proof before they can be made ineligible safely.
+
+Full evidence: `research/results/pool-exhaustion-0.6.0.md`.
+
 ## Next boundary
 
-The remaining stock-world mutation boundary is **pool/category exhaustion propagation**.
+Continue the **pool/category exhaustion propagation** experiment with a constant-only synthetic target rather than broadening mutation semantics prematurely.
 
-A bounded synthetic exhaustion experiment is permitted because its purpose is to establish resolver semantics, not to model profile ownership. It must:
+Use the stock character-head leaf pools:
 
-- choose one exact vanilla cosmetic child pool reachable from `ItemPool_SkinsAndMisc`;
-- capture every touched leaf and parent-edge weight before mutation;
-- first prove that directly rolling the fully exhausted dedicated child pool produces no replacement cosmetic;
-- then make that exhausted child branch ineligible in the broader world root and prove the parent continues to resolve among its remaining source-local branches;
-- preserve the world root's original `Quantity`/no-drop behavior;
-- never add entries or redirect to foreign pools;
-- restore every touched signature exactly and ownership-guard the restore.
+- fail-closed validate all 24 direct class-head leaves as simple positive constants;
+- zero those leaves only for the synthetic exhaustion experiment;
+- leave the attribute-driven intermediate Heads->class selector untouched;
+- directly roll the exhausted Siren head pool and require zero cosmetic results;
+- zero only the exact simple `ItemPool_SkinsAndMisc -> Heads` edge for world propagation;
+- roll the world root and require zero head hits while preserving the root Quantity/no-drop ratio;
+- restore every captured leaf and root-edge signature exactly.
 
-Only after this boundary passes should the implementation generalize exhaustion propagation recursively or expand to arbitrary dedicated/mission/shared sources.
+Only after exhaustion propagation itself passes should attribute-backed leaf-weight exclusion become a separate bounded front.
