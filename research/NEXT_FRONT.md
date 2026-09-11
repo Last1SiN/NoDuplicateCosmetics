@@ -1,42 +1,41 @@
 # Next bounded front
 
-The attribute-backed leaf exclusion boundary is now closed.
+The attribute-backed leaf exclusion boundary is closed, and the first production-shaped implementation candidate now exists on `implementation/stock-world-filter-v0.1`.
 
-## Confirmed runtime contracts
+## Candidate under test
 
-1. Simple constant direct cosmetic leaves can be excluded by setting `Weight.BaseValueConstant = 0`.
-2. Remaining positive sibling weights are renormalized by the native resolver rather than turning the removed leaf weight into a new no-drop slot.
-3. Source-root `Quantity` must remain untouched so native no-drop behavior is preserved.
-4. Dedicated cosmetic pools which have no eligible leaves produce no replacement cosmetic.
-5. Exhausted source-local branches can be removed from a broader source so the broader native resolver chooses only among the source's remaining reachable branches.
-6. Attribute-backed direct cosmetic leaves cannot be excluded by zeroing `BaseValueConstant` alone.
-7. For the runtime-confirmed shape with positive `BaseValueConstant`, non-null `BaseValueAttribute`, null `AttributeInitializer`, no DataTable, and positive `BaseValueScale`, exclusion requires both `BaseValueConstant = 0` and `BaseValueScale = 0`, while preserving the attribute pointer and all other fields.
-8. Exact guarded restore of mutated signatures has passed for both constant-only and attribute-backed cases.
+`NoDuplicateCosmetics` version `0.1.0` filters only the stock world-cosmetic graph rooted at `ItemPool_SkinsAndMisc`.
 
-## Current front: first production-shaped filter
+It implements the runtime-confirmed contracts:
 
-Build a production-shaped source-local filter over the stock `ItemPool_SkinsAndMisc` graph, without the diagnostic spawner.
+1. Simple constant owned leaves: set `BaseValueConstant = 0`.
+2. Attribute-backed owned leaves of the proven shape: set both `BaseValueConstant = 0` and `BaseValueScale = 0`, preserving `BaseValueAttribute` and all other fields.
+3. Exhausted child pools propagate upward only through the same source-local graph.
+4. Root `Quantity`, external `PoolProbability`, profile data, non-cosmetic entries, and foreign pools remain untouched.
+5. Ownership is refreshed lazily during the session so newly learned cosmetics can become ineligible without restart.
+6. Exact guarded restore is used for every managed weight; later third-party changes are left untouched rather than overwritten.
+7. Unsupported or unresolved weight/ownership shapes fail closed.
 
-Required behavior:
+The implementation contains no dev spawner, keybinds, console commands, or normal-operation info logging.
 
-- wait lazily until local profile/player ownership queries are authoritative;
-- traverse only pools reachable from the exact stock world-cosmetic root;
-- resolve direct cosmetic leaves through the three confirmed ownership APIs;
-- classify each leaf weight by runtime shape;
-- for owned simple-constant leaves, zero only `BaseValueConstant`;
-- for owned attribute-backed leaves matching the proven contract, zero both `BaseValueConstant` and `BaseValueScale`;
-- fail closed on DataTable-backed, AttributeInitializer-backed, unresolved, or otherwise unproven weight shapes;
-- propagate child exhaustion upward only through source-local edges whose mutation semantics are proven;
-- preserve `Quantity`, `PoolProbability`, non-cosmetic entries, and all foreign pools;
-- keep exact captured signatures and restore only when the current live state still matches the mod-owned filtered state;
-- refresh after ownership changes so a cosmetic learned during the same session becomes ineligible without restarting the game;
-- no normal-operation info/debug spam in the release-shaped candidate.
+## Current validation boundary
 
-## Still outside this front
+Runtime-test the release-shaped candidate itself, not another mutation probe.
 
-- generic discovery of every mission/dedicated/container cosmetic source in the whole game;
-- DataTable-backed and `AttributeInitializer`-backed weight mutation;
-- multiplayer authority/client behavior;
-- compatibility arbitration when another mod mutates the same exact weight after NoDuplicateCosmetics.
+Required first-pass validation:
 
-The purpose of the next build is to convert the proven world-graph mechanics into the first production-shaped implementation, then validate it with ordinary gameplay drops before broadening source coverage.
+- game loads cleanly with the candidate enabled;
+- no errors from `NoDuplicateCosmetics` appear after entering a character;
+- world cosmetic drops continue to occur normally;
+- the known owned world-drop head `Motosaurus` is not selected while the candidate is active;
+- unowned cosmetics still appear from the same world source;
+- disabling the mod does not crash and guarded restore emits no errors;
+- after learning a previously-unowned world cosmetic during the same session, wait at least one refresh interval and verify it stops being selected without restarting.
+
+Use a separate development-only stock-pool spawner if rapid sampling is needed; do not add diagnostic spawning back into the production candidate.
+
+## After candidate PASS
+
+Broaden discovery from the single stock world root to exact mission/dedicated/container/DLC cosmetic sources while preserving each source's own reachability graph. Do not claim generic all-source coverage before those source topologies are enumerated and validated.
+
+Multiplayer authority/client behavior and deeper compatibility arbitration remain separate later fronts.
