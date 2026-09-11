@@ -4,7 +4,7 @@ Status: source-confirmed, runtime probe pending.
 
 ## Production invariant
 
-NoDuplicateCosmetics must preserve the semantics of the loot source. It must not blindly destroy an owned cosmetic after spawn and must not globally convert cosmetic rolls into weapon rolls.
+NoDuplicateCosmetics must preserve both the semantics and the reachability of the original loot source. It must not blindly destroy an owned cosmetic after spawn, must not globally convert cosmetic rolls into weapon rolls, and must never introduce a cosmetic which the original source could not drop.
 
 ## Standard enemy world loot
 
@@ -38,17 +38,18 @@ The cosmetic entry points to `ItemPool_SkinsAndMisc`. That pool is itself a weig
 For this topology the desired behavior is:
 
 1. Preserve the original cosmetic `PoolProbability`.
-2. When the cosmetic branch succeeds, keep only unowned cosmetics eligible inside the relevant cosmetic pools.
-3. If one cosmetic type is exhausted, remove/zero that type from the parent cosmetic selector so another still-eligible cosmetic type can win naturally.
-4. If all cosmetic types reachable from that source are exhausted, suppress only that independent cosmetic branch. Do not manufacture an extra weapon/gear roll.
+2. When the cosmetic branch succeeds, consider only still-unlocked cosmetics which are actually reachable from that exact source through its vanilla child pools.
+3. If the initially selected cosmetic is already owned, reroll only within that source-local reachable set; never substitute a cosmetic from another source or broader global pool.
+4. If one cosmetic type is exhausted for this source, remove/zero only that exhausted child branch from this source's parent cosmetic selector so another still-eligible branch reachable from the same source can win naturally.
+5. If all cosmetics reachable from that exact source are exhausted, suppress only that independent cosmetic branch: no cosmetic drops and no replacement weapon/gear roll.
 
 ## Other source topologies
 
 Other sources must be classified before production mutation:
 
 - Shared weighted pools containing gear and cosmetics: owned cosmetics should become ineligible and the existing weighted roll should resolve among remaining entries. This can naturally result in gear without adding an extra roll.
-- Dedicated cosmetic pools: reroll among unowned cosmetics reachable from that source.
-- Nested/list-based sources: propagate pool exhaustion upward only as far as required to prevent a successful parent roll from resolving to an empty child.
+- Dedicated cosmetic pools: reroll only among still-unlocked cosmetics that belong to that exact drop pool. If that pool contains no eligible unowned cosmetic, it produces no replacement cosmetic.
+- Nested/list-based sources: preserve the original reachability graph. Pool exhaustion may propagate upward only as far as required to prevent a successful parent roll from resolving to an empty child; it must not broaden eligibility to sibling/foreign pools which the source did not reference.
 
 ## Runtime probe
 
