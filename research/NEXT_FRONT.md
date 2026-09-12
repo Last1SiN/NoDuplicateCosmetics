@@ -1,46 +1,64 @@
 # Next bounded front
 
-The generalized loaded-pool selection boundary and the same-session real ownership refresh boundary are now closed for the exercised cases.
+The generalized loaded-pool selection boundary, same-session real ownership refresh, normal disable/restore lifecycle, and external-conflict compatibility arbitration are now closed for the exercised cases.
 
 Evidence:
 
 - `research/results/generic-topology-validator-0.2.1-pass.md`
 - `research/results/same-session-unlock-refresh-0.3.1-pass.md`
+- `research/results/disable-restore-0.4.0-pass.md`
+- `research/results/compatibility-arbitration-0.5.0-pass.md`
 
 Confirmed with `NoDuplicateCosmetics 0.2.0`:
 
 - representative dedicated, nested, mixed, and stock-world source-local selection semantics passed;
-- a real one-item mission trinket pickup was physically created and transferred into inventory;
-- the player learned that trinket normally, causing native ownership `False -> True`;
-- production filtered the newly-owned exact leaf in the same running session after `384.6 ms`;
-- 32 requests from the now-exhausted dedicated pool produced `target_hits=0`;
-- no validator profile mutation occurred.
+- a real cosmetic was learned in-session and the exact leaf was filtered without restart;
+- ordinary disable restored a managed leaf to an operational positive weight and re-enable filtered it again;
+- a deliberate later external weight change was not overwritten while production remained enabled;
+- guarded restore preserved the conflicting external value;
+- on a subsequent clean enable production adopted that external value as the new baseline, filtered it, and later restored the same external baseline;
+- cleanup returned the exercised target to the vanilla baseline beneath the production filter;
+- production was left enabled after each validator front.
 
-## Current bounded front: disable / normal guarded restore
+## Current bounded front: multiplayer authority / client behavior
 
-Validate production lifecycle ownership around a real managed leaf without changing persistent mod settings.
+`coop_support` remains `Unknown` until this boundary is exercised with a **real second peer**. A single local process cannot establish whether loot-pool mutation, ownership lookup, and native loot resolution behave correctly across host/client authority boundaries.
 
-Use a separate development-only validator which may drive the `mods_base.Mod` enable/disable methods, but must not write the target weight directly.
+Required minimum matrix uses two actual game peers in the same session:
 
-Preferred fully automatic flow:
+1. **Host runs production; client does not.**
+   - identify which peer is authoritative for the exercised loot source;
+   - confirm host-owned cosmetics are filtered from host-instanced loot;
+   - determine what a client with different ownership receives;
+   - require no crash/desync and no mutation of client profile ownership.
+2. **Both peers run production.**
+   - use profiles with intentionally different ownership for at least one reachable cosmetic;
+   - confirm each peer's instanced loot follows that peer's ownership where the game exposes per-player instancing;
+   - detect whether both Python processes touch the same authoritative pool object or only their local copies;
+   - require no cross-peer overwrite/oscillation of managed weights.
+3. **Client runs production; host does not.**
+   - establish whether client-side pool mutation has any effect on authoritative loot generation;
+   - if it does not, record the mod as host-required rather than pretending client-only support.
 
-1. After player readiness, find the running `NoDuplicateCosmetics` mod instance through `mods_base.get_ordered_mod_list()` and require it to be enabled.
-2. Select an owned cosmetic leaf from a known one-item dedicated pool which is currently in the production-filtered signature.
-3. Record the filtered signature.
-4. Call `production.disable(dont_update_setting=True)` so production executes its real `on_disable -> _restore_all` path without changing persistent enable settings.
-5. Require the target leaf to return to a supported positive eligible signature within a bounded window; record this as the restored/original signature.
-6. Optionally issue one bounded request from the exact one-item pool while production is disabled and require the target to resolve, proving the restored weight is operational in the native resolver.
-7. Call `production.enable()` in the same session.
-8. Require the exact target leaf to return to the expected filtered signature computed from the observed restored signature.
-9. After settling, issue a bounded request set from the same dedicated pool and require zero target results again.
-10. On validator failure or validator disable, always make a best-effort attempt to leave production enabled.
-11. The validator must not mutate `BaseValueConstant`, `BaseValueScale`, pool `Quantity`, source probabilities/counts, profile ownership, or production internal state directly.
+Preferred first source is a simple one-item dedicated cosmetic pool plus the already validated world root as a no-drop regression control. Do not start with mixed chest or mission-completion side effects.
 
-This front validates the ordinary restore path. It does **not** yet inject a third-party conflicting weight.
+Instrumentation should be observation-first and log at minimum:
 
-## Boundary after disable / normal restore
+- network role / authority indicators for local player and spawned pickup where available;
+- local profile ownership for the exercised balance;
+- target weight signature before/after production filtering on each peer;
+- whether the exact target resolves for each peer;
+- loot instancing/owner-controller fields when observable;
+- peer role (`host` / `client`) and whether production is enabled on that peer.
 
-If this passes, proceed to:
+Do not infer co-op support from single-player success. Do not change `coop_support = "Unknown"` until the real two-peer matrix supports a narrower claim.
 
-1. multiplayer authority/client behavior;
-2. compatibility arbitration / external-conflict guarded restore, where a separate test component changes a production-managed weight after filtering and production must leave that external value untouched rather than restoring over it.
+## Boundary after multiplayer validation
+
+If the two-peer matrix passes, classify the actual co-op support mode (`HostOnly`, `RequiresAllPlayers`, `ClientSide`, or another evidence-backed description), then perform release cleanup:
+
+1. remove validation-only INFO diagnostics from production;
+2. fix README candidate wording and finalize public documentation;
+3. bump to the release version with numeric dotted metadata only;
+4. build canonical `.sdkmod` and Nexus outer ZIP;
+5. run final archive/compile/metadata/safety verification.
