@@ -1,48 +1,59 @@
 # Next bounded front
 
-The first production-shaped stock-world implementation is now live and its startup/reconcile path has passed in-game.
+The stock-world production behavior boundary is now closed.
 
-## Candidate under test
+`NoDuplicateCosmetics 0.1.2` plus the independent read-only validator confirmed:
 
-`NoDuplicateCosmetics` version `0.1.2` filters only the stock world-cosmetic graph rooted at `ItemPool_SkinsAndMisc`.
+- `20 pools / 139 leaves / 139 ownership mappings`;
+- the active profile had `1` owned reachable world cosmetic and production filtered exactly `1` leaf;
+- direct source-local sampling: `128/128`, `owned_hits=0`, `unresolved=0`, unowned siblings still resolved;
+- world root sampling: `512` requests -> `235` cosmetic observations (`0.4590`), `owned_hits=0`, `unresolved=0`, `63` distinct cosmetics;
+- all three ownership classes appeared;
+- native world-root no-drop remained present;
+- validator performed no mutation.
 
-Confirmed production runtime state from the first clean run:
+Evidence: `research/results/production-world-filter-validator-0.1.0.md`.
 
-- package imported and enabled successfully;
-- graph traversal resolved **20 pools / 139 cosmetic leaves**;
-- ownership mapping resolved **139/139** leaves;
-- the active profile had **1 owned reachable world cosmetic**;
-- production reconcile filtered exactly **1 owned leaf**;
-- `exhausted_edges=0` for this profile;
-- `blocked=0` and no production error was logged.
+## Current bounded front: generic non-world source discovery
 
-Full evidence: `research/results/production-world-filter-0.1.2.md`.
+Do **not** broaden production mutation yet. First inventory and classify the exact source topologies which can award/drop cosmetics outside the already-covered stock world root.
 
-## Current validation boundary: observation-only stock-pool runner
+Source-first class surfaces confirmed from generated headers:
 
-Do not add spawning or diagnostic mutation back into the production candidate.
+1. **Mission rewards** — `UOakBaseMissionRewardData.ItemPoolReward` is a soft `UItemPoolData` reference.
+2. **Dedicated enemy death loot** — `UAIBalanceStateComponent.DropOnDeathItemPools` and `CharacterExpansionDropOnDeathItemPools` are `FItemPoolCollection` sources; `FItemPoolCollection` contains direct `FItemPoolInfo` entries and `UItemPoolListData` references.
+3. **Lootables / containers** — `ULootableComponent` is initialized from `ULootableBalanceData`; loot configurations contain `FLootAttachmentInfo`, whose `ItemPool` points to a `UItemPoolData`. Runtime `LootConfigurations` can also be inspected read-only.
+4. **DLC/event source variants** — treat `/Game/PatchDLC/...` pools exactly like base-game pools, but preserve the original source owner and graph; do not fold them into a global cosmetic pool.
 
-Build a separate development-only validator which runs alongside `NoDuplicateCosmetics 0.1.2` and does **not** mutate any loot weight, Quantity, PoolProbability, ownership/profile state, or production-mod state.
+The first discovery implementation must be a separate development-only, read-only `.sdkmod` and must not mutate weights, `Quantity`, `PoolProbability`, mission/profile state, or production-mod state.
 
-The validator should automatically:
+It should automatically, after player readiness:
 
-1. wait for a stable local player and for the production filter to have already applied;
-2. traverse/read the live stock world-cosmetic graph and ownership mappings;
-3. confirm that every currently-owned reachable leaf is already in a disabled/excluded live weight state;
-4. select the containing dedicated pool of an owned leaf and sample it, verifying `owned_hits=0` while unowned siblings still resolve;
-5. sample the stock `ItemPool_SkinsAndMisc` root with a sufficiently large batch, recording observed cosmetic ratio, owned hits, unresolved hits, and category diversity;
-6. require `owned_hits=0` and `unresolved=0`; record the world observed/no-drop ratio without forcing a cosmetic on every request;
-7. remain read-only with respect to loot weights and restore nothing, because the validator owns no mutation;
-8. emit one final PASS/REJECT verdict and otherwise avoid manual commands/keybinds.
+- enumerate loaded `ItemPoolData` assets and classify every graph containing cosmetic leaves;
+- enumerate loaded `OakBaseMissionRewardData` subclasses and record `ItemPoolReward` sources whose graph can reach cosmetics;
+- enumerate loaded `AIBalanceStateComponent` objects and inspect both death-loot collections plus nested item-pool lists;
+- enumerate loaded `LootableBalanceData`, `LootListData`, and runtime `LootableComponent` configurations and record item-pool attachments whose graph can reach cosmetics;
+- classify each discovered root as `dedicated_cosmetic`, `mixed_cosmetic_noncosmetic`, or `nested_cosmetic`;
+- record exact owner path, source field, root pool path, child-pool count, cosmetic/non-cosmetic leaf counts, unresolved entries, and package family (`/Game` vs `/Game/PatchDLC/...`);
+- emit each unique source once and produce a compact summary;
+- fail closed on unreadable/unresolved structures;
+- never spawn loot and never change any live object.
 
-This validates the production integration rather than re-testing the old mutation primitives.
+Repeated scans are allowed only to discover newly-loaded map/DLC packages; avoid periodic duplicate spam.
 
-## Still pending after this validation
+## Boundary after discovery
 
-- same-session acquisition refresh using a real newly-learned world cosmetic;
-- disable/restore gameplay validation of the production candidate;
-- generic discovery of mission/dedicated/container/DLC cosmetic sources;
+Only after concrete source families/topologies are observed should production filtering be generalized. The generalized filter must operate on each exact source-local graph and preserve:
+
+- original source reachability;
+- source `PoolProbability` / selection count semantics;
+- pool `Quantity` / no-drop semantics;
+- non-cosmetic entries in mixed pools;
+- exact guarded restore ownership.
+
+Still separate later fronts:
+
+- same-session unlock refresh with a real newly learned cosmetic;
+- disable / guarded-restore gameplay validation;
 - multiplayer authority/client behavior;
-- compatibility arbitration for another mod changing a managed weight after `NoDuplicateCosmetics`.
-
-Only after the observation runner passes should the front broaden beyond the stock world root.
+- compatibility arbitration when another mod changes a managed weight after filtering.
