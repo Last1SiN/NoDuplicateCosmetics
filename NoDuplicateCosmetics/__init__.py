@@ -12,34 +12,30 @@ from unrealsdk.unreal import BoundFunction, UObject, WrappedStruct
 
 assert Game.get_current() is Game.BL3, "NoDuplicateCosmetics supports Borderlands 3 only"
 
-logging.info("[NoDuplicateCosmetics] LOADED candidate=0.1.2")
+logging.info("[NoDuplicateCosmetics] LOADED candidate=0.2.0")
 
 HUD_FRAME = "/Script/Engine.HUD:ReceiveDrawHUD"
-WORLD_POOL_PATH = (
-    "/Game/GameData/Loot/ItemPools/ItemPool_SkinsAndMisc."
-    "ItemPool_SkinsAndMisc"
-)
 
 PLAYER_SETTLE_SECONDS = 2.0
 REFRESH_INTERVAL_SECONDS = 1.0
+DISCOVERY_INTERVAL_SECONDS = 5.0
 
-_root_pool: UObject | None = None
 _graph_ready = False
 _pool_nodes: dict[str, dict[str, Any]] = {}
-_leaf_records: dict[tuple[str, int, str], dict[str, Any]] = {}
+_cosmetic_leaf_records: dict[tuple[str, int, str], dict[str, Any]] = {}
 _customization_by_balance: dict[str, tuple[str, UObject]] = {}
 
-# Entries currently owned by this mod. Each record stores the live pool/index plus
-# exact before/after weight signatures so disable/refresh never blindly overwrites a
-# later third-party change.
 _managed: dict[tuple[str, int, str, str], dict[str, Any]] = {}
 _blocked_keys: set[tuple[str, int, str, str]] = set()
 
 _pc_identity: tuple[str, int | None] | None = None
 _ready_since: float | None = None
 _last_refresh = 0.0
+_last_discovery = 0.0
+
 _reported_errors: set[str] = set()
 _startup_reported = False
+_last_topology_summary: tuple[int, int, int, int] | None = None
 
 
 def _path(obj: Any) -> str:
@@ -81,70 +77,30 @@ def _report_once(token: str, message: str) -> None:
     logging.error(f"[NoDuplicateCosmetics] {message}")
 
 
-def _package_from_object_path(path: str) -> str:
-    return path.rsplit(".", 1)[0]
-
-
-def _load_object(class_name: str, path: str, *, log_errors: bool = True) -> UObject | None:
-    try:
-        unrealsdk.load_package(_package_from_object_path(path))
-    except Exception as exc:
-        if log_errors:
-            _report_once(
-                f"load-package:{path}",
-                f"could not load package for {path}: {type(exc).__name__}: {exc}",
-            )
-    try:
-        return unrealsdk.find_object(class_name, path)
-    except Exception as exc:
-        if log_errors:
-            _report_once(
-                f"find-object:{class_name}:{path}",
-                f"could not find {class_name} {path}: {type(exc).__name__}: {exc}",
-            )
-        return None
-
-
 def _candidate_path(value: Any) -> str:
     if value is None:
         return "<None>"
-    p = _path(value)
-    if p != "<unreadable-path>":
-        return p
+
+    path = _path(value)
+    if path != "<unreadable-path>":
+        return path
+
     try:
         text = str(value)
     except Exception:
         return "<unreadable>"
+
     match = re.search(r"(/Game/[^\'\"\s>)]+)", text)
     return match.group(1) if match else text
 
 
-def _entry_balance_path(entry: Any) -> str:
-    for name in ("ResolvedInventoryBalanceData", "InventoryBalanceData"):
-        try:
-            value = getattr(entry, name)
-        except Exception:
-            continue
-        p = _candidate_path(value)
-        if p not in ("<None>", "<unreadable>", "<unreadable-path>"):
-            return p
-    return "<unresolved>"
-
-
-def _entry_child_pool(entry: Any) -> UObject | None:
+def _find_loaded_object(class_name: str, path: str) -> UObject | None:
+    if not path.startswith("/Game/"):
+        return None
     try:
-        return entry.ItemPoolData
+        return unrealsdk.find_object(class_name, path)
     except Exception:
         return None
-
-
-def _load_balance(path: str) -> UObject | None:
-    # The world graph should contain customization balances only. Try the specific
-    # class first, then the base inventory-balance class for diagnostic safety.
-    obj = _load_object("CustomizationInventoryBalanceData", path, log_errors=False)
-    if obj is None:
-        obj = _load_object("InventoryBalanceData", path, log_errors=False)
-    return obj
 
 
 def _weight_signature(weight: Any) -> tuple[Any, ...]:
@@ -157,6 +113,7 @@ def _weight_signature(weight: Any) -> tuple[Any, ...]:
         data_table = "<unreadable>"
         row_name = "<unreadable>"
         value_name = "<unreadable>"
+
     return (
         float(weight.BaseValueConstant),
         data_table,
@@ -199,8 +156,8 @@ def _filtered_signature(original: tuple[Any, ...], mode: str) -> tuple[Any, ...]
 
 
 def _entry_key(record: dict[str, Any]) -> tuple[str, int, str, str]:
-    target_kind = "edge" if record["child_path"] is not None else "leaf"
-    target = record["child_path"] or record["balance_path"]
+    target_kind = "edge" if record["kind"] == "child" else "leaf"
+    target = record["child_path"] if target_kind == "edge" else record["balance_path"]
     return record["pool_path"], record["index"], target_kind, target
 
 
@@ -210,114 +167,24 @@ def _current_signature(record: dict[str, Any]) -> tuple[Any, ...]:
 
 def _original_for(record: dict[str, Any]) -> tuple[Any, ...]:
     managed = _managed.get(_entry_key(record))
-    return managed["original"] if managed is not None else _current_signature(record)
+    if managed is not None:
+        return managed["original"]
+    return _current_signature(record)
 
 
-def _collect_graph() -> bool:
-    global _root_pool, _graph_ready
-
-    root = _load_object("ItemPoolData", WORLD_POOL_PATH)
-    if root is None:
-        return False
-
-    pool_nodes: dict[str, dict[str, Any]] = {}
-    leaf_records: dict[tuple[str, int, str], dict[str, Any]] = {}
-    visiting: set[str] = set()
-    complete: set[str] = set()
-    blockers: list[str] = []
-
-    def walk(pool: UObject) -> None:
-        pool_path = _path(pool)
-        if pool_path in complete:
-            return
-        if pool_path in visiting:
-            blockers.append(f"cycle detected at {pool_path}")
-            return
-        visiting.add(pool_path)
-
-        try:
-            count = len(pool.BalancedItems)
-        except Exception as exc:
-            blockers.append(
-                f"cannot read BalancedItems for {pool_path}: {type(exc).__name__}: {exc}"
-            )
-            visiting.remove(pool_path)
-            return
-
-        records: list[dict[str, Any]] = []
-        for idx in range(count):
-            live = pool.BalancedItems[idx]
-            child = _entry_child_pool(live)
-            if child is not None:
-                child_path = _path(child)
-                if not child_path.startswith("/Game/"):
-                    blockers.append(
-                        f"unresolved child pool at {pool_path}[{idx}]: {child_path}"
-                    )
-                    continue
-                record = {
-                    "pool": pool,
-                    "pool_path": pool_path,
-                    "index": idx,
-                    "child": child,
-                    "child_path": child_path,
-                    "balance": None,
-                    "balance_path": None,
-                }
-                records.append(record)
-                walk(child)
-                continue
-
-            balance_path = _entry_balance_path(live)
-            if not balance_path.startswith("/Game/"):
-                blockers.append(
-                    f"unresolved balance at {pool_path}[{idx}]: {balance_path}"
-                )
-                continue
-            balance = _load_balance(balance_path)
-            if balance is None or not _is_a(balance, "CustomizationInventoryBalanceData"):
-                blockers.append(
-                    f"non-cosmetic/unresolved balance at {pool_path}[{idx}]: "
-                    f"{balance_path} ({_class_name(balance)})"
-                )
-                continue
-            record = {
-                "pool": pool,
-                "pool_path": pool_path,
-                "index": idx,
-                "child": None,
-                "child_path": None,
-                "balance": balance,
-                "balance_path": balance_path,
-            }
-            records.append(record)
-            leaf_records[(pool_path, idx, balance_path)] = record
-
-        pool_nodes[pool_path] = {"pool": pool, "entries": records}
-        visiting.remove(pool_path)
-        complete.add(pool_path)
-
-    walk(root)
-
-    if blockers:
-        _report_once("graph:" + blockers[0], f"world graph rejected: {blockers[0]}")
-        return False
-
-    if WORLD_POOL_PATH not in pool_nodes or not leaf_records:
-        _report_once("graph-empty", "world cosmetic graph resolved without cosmetic leaves")
-        return False
-
-    _root_pool = root
-    _pool_nodes.clear()
-    _pool_nodes.update(pool_nodes)
-    _leaf_records.clear()
-    _leaf_records.update(leaf_records)
-    _graph_ready = True
-    return True
+def _entry_enabled(record: dict[str, Any]) -> bool:
+    try:
+        return _weight_mode(_original_for(record)) != "disabled"
+    except Exception as exc:
+        _report_once(
+            f"weight-read:{_entry_key(record)}",
+            f"could not inspect weight at {_entry_key(record)}; leaving it reachable: "
+            f"{type(exc).__name__}: {exc}",
+        )
+        return True
 
 
 def _rebuild_customization_map() -> bool:
-    wanted = {record["balance_path"] for record in _leaf_records.values()}
     mapping: dict[str, tuple[str, UObject]] = {}
 
     for kind in (
@@ -333,54 +200,92 @@ def _rebuild_customization_map() -> bool:
                 f"could not enumerate {kind}: {type(exc).__name__}: {exc}",
             )
             return False
+
         for candidate in candidates:
             try:
-                balance_path = _path(candidate.BalanceData)
+                balance_path = _candidate_path(candidate.BalanceData)
             except Exception:
                 continue
-            if balance_path in wanted:
+            if balance_path.startswith("/Game/"):
                 mapping[balance_path] = (kind, candidate)
-
-    missing = wanted.difference(mapping)
-    if missing:
-        sample = sorted(missing)[0]
-        _report_once(
-            f"mapping:{sample}",
-            f"ownership mapping incomplete; first missing world cosmetic balance: {sample}",
-        )
-        return False
 
     _customization_by_balance.clear()
     _customization_by_balance.update(mapping)
     return True
 
 
-def _owned(balance_path: str) -> bool | None:
-    mapped = _customization_by_balance.get(balance_path)
-    if mapped is None:
-        return None
-    kind, data = mapped
+def _entry_balance_info(entry: Any) -> tuple[str, str]:
+    selected_value: Any = None
+    balance_path = "<unresolved>"
+
+    for name in ("ResolvedInventoryBalanceData", "InventoryBalanceData"):
+        try:
+            value = getattr(entry, name)
+        except Exception:
+            continue
+
+        path = _candidate_path(value)
+        if path in ("<None>", "<unreadable>", "<unreadable-path>"):
+            continue
+
+        selected_value = value
+        balance_path = path
+        break
+
+    if not balance_path.startswith("/Game/"):
+        return balance_path, "unknown"
+
+    if balance_path in _customization_by_balance:
+        return balance_path, "cosmetic"
+
+    if _is_a(selected_value, "CustomizationInventoryBalanceData"):
+        return balance_path, "cosmetic_unmapped"
+    if _is_a(selected_value, "InventoryBalanceData"):
+        return balance_path, "noncosmetic"
+
+    cosmetic = _find_loaded_object("CustomizationInventoryBalanceData", balance_path)
+    if cosmetic is not None:
+        return balance_path, "cosmetic_unmapped"
+
+    base = _find_loaded_object("InventoryBalanceData", balance_path)
+    if base is not None:
+        return balance_path, "noncosmetic"
+
+    return balance_path, "unknown"
+
+
+def _entry_child_info(entry: Any, loaded_pools: dict[str, UObject]) -> tuple[str, UObject | None]:
     try:
-        pc = get_pc()
-        if pc is None:
-            return None
-        if kind == "OakCustomizationData":
-            return bool(pc.IsCustomizationUnlocked(data))
-        if kind == "OakInventoryCustomizationPartData":
-            return bool(pc.IsInventoryCustomizationPartUnlocked(data))
-        if kind == "CrewQuartersDecorationItemData":
-            return bool(pc.IsCrewQuartersDecorationUnlocked(data))
-    except Exception as exc:
-        _report_once(
-            f"ownership:{kind}:{balance_path}",
-            f"ownership query failed for {balance_path}: {type(exc).__name__}: {exc}",
-        )
-        return None
-    return None
+        value = entry.ItemPoolData
+    except Exception:
+        return "<None>", None
+
+    if value is None:
+        return "<None>", None
+
+    path = _candidate_path(value)
+    if not path.startswith("/Game/"):
+        return path, None
+
+    if _is_a(value, "ItemPoolData"):
+        return path, value
+
+    return path, loaded_pools.get(path)
 
 
 def _restore_record(key: tuple[str, int, str, str], record: dict[str, Any]) -> bool:
-    current = _current_signature(record)
+    try:
+        current = _current_signature(record)
+    except Exception as exc:
+        _managed.pop(key, None)
+        _blocked_keys.add(key)
+        _report_once(
+            f"restore-read:{key}",
+            f"managed entry became unreadable; dropping ownership for {key}: "
+            f"{type(exc).__name__}: {exc}",
+        )
+        return False
+
     original = record["original"]
     filtered = record["filtered"]
 
@@ -397,8 +302,8 @@ def _restore_record(key: tuple[str, int, str, str], record: dict[str, Any]) -> b
         )
         return False
 
-    live = record["pool"].BalancedItems[record["index"]].Weight
     try:
+        live = record["pool"].BalancedItems[record["index"]].Weight
         live.BaseValueConstant = float(original[0])
         if record["mode"] == "attribute":
             live.BaseValueScale = float(original[6])
@@ -409,11 +314,16 @@ def _restore_record(key: tuple[str, int, str, str], record: dict[str, Any]) -> b
         )
         return False
 
-    if _current_signature(record) != original:
+    try:
+        restored = _current_signature(record) == original
+    except Exception:
+        restored = False
+
+    if not restored:
         _report_once(
             f"restore-verify:{key}",
             f"restored weight did not match captured signature at {key}",
-         )
+        )
         return False
 
     _managed.pop(key, None)
@@ -421,24 +331,36 @@ def _restore_record(key: tuple[str, int, str, str], record: dict[str, Any]) -> b
 
 
 def _restore_all() -> None:
-    # Snapshot because _restore_record removes successful/conflicted records.
     for key, record in list(_managed.items()):
         _restore_record(key, record)
 
 
 def _apply_record(record: dict[str, Any], mode: str) -> bool:
     key = _entry_key(record)
+
     if key in _blocked_keys:
         return False
 
     existing = _managed.get(key)
     if existing is not None:
-        # Refresh object reference in case the graph was rebuilt around the same entry.
         existing["pool"] = record["pool"]
         existing["index"] = record["index"]
-        current = _current_signature(existing)
+
+        try:
+            current = _current_signature(existing)
+        except Exception as exc:
+            _blocked_keys.add(key)
+            _managed.pop(key, None)
+            _report_once(
+                f"managed-read:{key}",
+                f"managed entry became unreadable; filtering disabled for {key}: "
+                f"{type(exc).__name__}: {exc}",
+            )
+            return False
+
         if current == existing["filtered"]:
             return True
+
         if current != existing["original"]:
             _blocked_keys.add(key)
             _managed.pop(key, None)
@@ -447,39 +369,49 @@ def _apply_record(record: dict[str, Any], mode: str) -> bool:
                 f"managed weight changed externally; filtering disabled for {key}",
             )
             return False
+
         original = existing["original"]
         mode = existing["mode"]
     else:
-        original = _current_signature(record)
+        try:
+            original = _current_signature(record)
+        except Exception as exc:
+            _report_once(
+                f"apply-read:{key}",
+                f"could not inspect {key}; leaving vanilla value untouched: "
+                f"{type(exc).__name__}: {exc}",
+            )
+            return False
+
         actual_mode = _weight_mode(original)
         if actual_mode == "disabled":
             return True
         if actual_mode != mode:
             _report_once(
                 f"mode-drift:{key}",
-                f"weight shape changed before mutation at {key}; filtering this graph is disabled",
+                f"weight shape changed before mutation at {key}; leaving it untouched",
             )
             return False
 
     filtered = _filtered_signature(original, mode)
-    live = record["pool"].BalancedItems[record["index"]].Weight
 
     try:
+        live = record["pool"].BalancedItems[record["index"]].Weight
         live.BaseValueConstant = 0.0
         if mode == "attribute":
             live.BaseValueScale = 0.0
     except Exception as exc:
-        # We own this immediate write attempt; restore the fields we just touched.
         try:
             live.BaseValueConstant = float(original[0])
             if mode == "attribute":
                 live.BaseValueScale = float(original[6])
         except Exception:
             pass
+
         _report_once(
             f"apply-write:{key}",
             f"failed to filter {key}: {type(exc).__name__}: {exc}",
-         )
+        )
         return False
 
     candidate = {
@@ -488,174 +420,429 @@ def _apply_record(record: dict[str, Any], mode: str) -> bool:
         "original": original,
         "filtered": filtered,
     }
-    if _current_signature(candidate) != filtered:
+
+    try:
+        verified = _current_signature(candidate) == filtered
+    except Exception:
+        verified = False
+
+    if not verified:
         try:
             live.BaseValueConstant = float(original[0])
             if mode == "attribute":
                 live.BaseValueScale = float(original[6])
         except Exception:
             pass
+
         _report_once(
             f"apply-verify:{key}",
             f"filtered weight did not match expected signature at {key}",
-         )
+        )
         return False
 
     _managed[key] = candidate
     return True
 
 
-def _plan_desired_mutations() -> tuple[dict[tuple[str, int, str, str], tuple[dict[str, Any], str]], str | None]:
-    desired: dict[tuple[str, int, str, str], tuple[dict[str, Any], str]] = {}
-    leaf_available: dict[tuple[str, int, str], bool] = {}
+def _discover_loaded_graph() -> bool:
+    global _graph_ready, _last_topology_summary
 
-    for leaf_id, record in _leaf_records.items():
-        owned = _owned(record["balance_path"])
-        if owned is None:
-            return {}, f"ownership unresolved for {record['balance_path']}"
-        if not owned:
-            # Respect an entry which was already disabled by another mod before our
-            # scan. Unknown positive shapes remain untouched and count as reachable.
-            original = _original_for(record)
-            leaf_available[leaf_id] = _weight_mode(original) != "disabled"
-            continue
+    if not _rebuild_customization_map():
+        return False
 
-        key = _entry_key(record)
-        if key in _blocked_keys:
-            return {}, f"externally conflicted owned leaf {record['balance_path']}"
+    try:
+        candidates = list(unrealsdk.find_all("ItemPoolData", exact=False))
+    except Exception as exc:
+        _report_once(
+            "find-all:ItemPoolData",
+            f"could not enumerate loaded ItemPoolData: {type(exc).__name__}: {exc}",
+        )
+        return False
 
-        original = _original_for(record)
-        mode = _weight_mode(original)
-        if mode == "disabled":
-            leaf_available[leaf_id] = False
-            continue
-        if mode not in ("constant", "attribute"):
-            return {}, (
-                f"unsupported owned leaf weight shape at {record['pool_path']}"
-                f"[{record['index']}] {record['balance_path']}"
+    loaded_pools: dict[str, UObject] = {}
+    for pool in candidates:
+        pool_path = _path(pool)
+        if pool_path.startswith("/Game/"):
+            loaded_pools[pool_path] = pool
+
+    new_nodes: dict[str, dict[str, Any]] = {}
+    new_cosmetic_leaves: dict[tuple[str, int, str], dict[str, Any]] = {}
+
+    for pool_path, pool in loaded_pools.items():
+        try:
+            count = len(pool.BalancedItems)
+        except Exception as exc:
+            _report_once(
+                f"pool-read:{pool_path}",
+                f"could not read BalancedItems for {pool_path}; leaving pool unmanaged: "
+                f"{type(exc).__name__}: {exc}",
             )
+            continue
+
+        records: list[dict[str, Any]] = []
+
+        for idx in range(count):
+            try:
+                live = pool.BalancedItems[idx]
+            except Exception:
+                continue
+
+            child_path, child = _entry_child_info(live, loaded_pools)
+            if child_path.startswith("/Game/"):
+                record = {
+                    "kind": "child",
+                    "pool": pool,
+                    "pool_path": pool_path,
+                    "index": idx,
+                    "child": child,
+                    "child_path": child_path,
+                    "balance_path": None,
+                    "balance_kind": None,
+                }
+                records.append(record)
+                continue
+
+            balance_path, balance_kind = _entry_balance_info(live)
+            record = {
+                "kind": "leaf",
+                "pool": pool,
+                "pool_path": pool_path,
+                "index": idx,
+                "child": None,
+                "child_path": None,
+                "balance_path": balance_path,
+                "balance_kind": balance_kind,
+            }
+            records.append(record)
+
+            if balance_kind in ("cosmetic", "cosmetic_unmapped"):
+                new_cosmetic_leaves[(pool_path, idx, balance_path)] = record
+
+        new_nodes[pool_path] = {
+            "pool": pool,
+            "entries": records,
+        }
+
+    for key, managed in list(_managed.items()):
+        if key[0] not in new_nodes:
+            _restore_record(key, managed)
+
+    _pool_nodes.clear()
+    _pool_nodes.update(new_nodes)
+    _cosmetic_leaf_records.clear()
+    _cosmetic_leaf_records.update(new_cosmetic_leaves)
+    _graph_ready = bool(_pool_nodes)
+
+    mapped_cosmetic = sum(
+        1 for record in _cosmetic_leaf_records.values()
+        if record["balance_kind"] == "cosmetic"
+    )
+    unmapped_cosmetic = len(_cosmetic_leaf_records) - mapped_cosmetic
+
+    summary = (
+        len(_pool_nodes),
+        len(_cosmetic_leaf_records),
+        mapped_cosmetic,
+        unmapped_cosmetic,
+    )
+
+    if _last_topology_summary is not None and summary != _last_topology_summary:
+        logging.info(
+            "[NoDuplicateCosmetics] TOPOLOGY_REFRESH candidate=0.2.0 "
+            f"loaded_pools={summary[0]} cosmetic_leaves={summary[1]} "
+            f"mapped_cosmetic={summary[2]} unmapped_cosmetic={summary[3]}"
+        )
+
+    _last_topology_summary = summary
+    return _graph_ready
+
+
+def _owned(balance_path: str, ownership_cache: dict[str, bool | None]) -> bool | None:
+    if balance_path in ownership_cache:
+        return ownership_cache[balance_path]
+
+    mapped = _customization_by_balance.get(balance_path)
+    if mapped is None:
+        ownership_cache[balance_path] = None
+        return None
+
+    kind, data = mapped
+    try:
+        pc = get_pc()
+        if pc is None:
+            ownership_cache[balance_path] = None
+            return None
+
+        if kind == "OakCustomizationData":
+            value = bool(pc.IsCustomizationUnlocked(data))
+        elif kind == "OakInventoryCustomizationPartData":
+            value = bool(pc.IsInventoryCustomizationPartUnlocked(data))
+        elif kind == "CrewQuartersDecorationItemData":
+            value = bool(pc.IsCrewQuartersDecorationUnlocked(data))
+        else:
+            value = None
+    except Exception as exc:
+        _report_once(
+            f"ownership:{kind}:{balance_path}",
+            f"ownership query failed for {balance_path}: {type(exc).__name__}: {exc}",
+        )
+        value = None
+
+    ownership_cache[balance_path] = value
+    return value
+
+
+def _plan_desired_mutations() -> tuple[
+    dict[tuple[str, int, str, str], tuple[dict[str, Any], str]],
+    dict[str, int],
+]:
+    desired: dict[tuple[str, int, str, str], tuple[dict[str, Any], str]] = {}
+    leaf_state: dict[tuple[str, int, str], tuple[bool, bool, bool]] = {}
+
+    ownership_cache: dict[str, bool | None] = {}
+    stats = {
+        "owned": 0,
+        "filtered_leaf_candidates": 0,
+        "exhausted_edge_candidates": 0,
+        "unmapped": 0,
+        "ownership_unresolved": 0,
+        "unsupported_owned": 0,
+        "cycles": 0,
+    }
+
+    for leaf_id, record in _cosmetic_leaf_records.items():
+        balance_path = record["balance_path"]
+
+        if record["balance_kind"] == "cosmetic_unmapped":
+            stats["unmapped"] += 1
+            leaf_state[leaf_id] = (_entry_enabled(record), True, False)
+            continue
+
+        owned = _owned(balance_path, ownership_cache)
+        if owned is None:
+            stats["ownership_unresolved"] += 1
+            leaf_state[leaf_id] = (_entry_enabled(record), True, False)
+            continue
+
+        try:
+            original = _original_for(record)
+            mode = _weight_mode(original)
+        except Exception as exc:
+            _report_once(
+                f"leaf-weight:{leaf_id}",
+                f"could not inspect cosmetic leaf {balance_path}; leaving it reachable: "
+                f"{type(exc).__name__}: {exc}",
+            )
+            leaf_state[leaf_id] = (True, True, False)
+            continue
+
+        if not owned:
+            leaf_state[leaf_id] = (mode != "disabled", True, False)
+            continue
+
+        stats["owned"] += 1
+        key = _entry_key(record)
+
+        if key in _blocked_keys:
+            leaf_state[leaf_id] = (mode != "disabled", True, False)
+            continue
+
+        if mode == "disabled":
+            leaf_state[leaf_id] = (False, True, False)
+            continue
+
+        if mode not in ("constant", "attribute"):
+            stats["unsupported_owned"] += 1
+            leaf_state[leaf_id] = (True, True, False)
+            _report_once(
+                f"unsupported-owned:{key}",
+                f"unsupported owned cosmetic weight; leaving vanilla eligibility at {key}",
+            )
+            continue
 
         desired[key] = (record, mode)
-        leaf_available[leaf_id] = False
+        stats["filtered_leaf_candidates"] += 1
+        leaf_state[leaf_id] = (False, True, True)
 
-    memo: dict[str, bool] = {}
+    memo: dict[str, tuple[bool, bool, bool]] = {}
     visiting: set[str] = set()
 
-    def pool_available(pool_path: str) -> bool:
+    def pool_state(pool_path: str) -> tuple[bool, bool, bool]:
         if pool_path in memo:
             return memo[pool_path]
+
         if pool_path in visiting:
-            raise RuntimeError(f"cycle while evaluating {pool_path}")
-        visiting.add(pool_path)
+            stats["cycles"] += 1
+            _report_once(
+                f"cycle:{pool_path}",
+                f"cycle detected in loaded item-pool graph at {pool_path}; "
+                "cycle kept reachable and unmanaged",
+            )
+            return True, False, False
 
         node = _pool_nodes.get(pool_path)
         if node is None:
-            raise RuntimeError(f"missing pool node {pool_path}")
+            return True, False, False
+
+        visiting.add(pool_path)
 
         any_available = False
+        cosmetic_only = True
+        affected = False
+        saw_entry = False
+
         for record in node["entries"]:
-            if record["child_path"] is None:
-                leaf_id = (record["pool_path"], record["index"], record["balance_path"])
-                if leaf_available.get(leaf_id, False):
-                    any_available = True
+            saw_entry = True
+
+            if record["kind"] == "child":
+                edge_enabled = _entry_enabled(record)
+                child_path = record["child_path"]
+
+                if record["child"] is None or child_path not in _pool_nodes:
+                    if edge_enabled:
+                        any_available = True
+                    cosmetic_only = False
+                    continue
+
+                child_available, child_cosmetic_only, child_affected = pool_state(child_path)
+                affected = affected or child_affected
+
+                if not child_cosmetic_only:
+                    cosmetic_only = False
+
+                if child_available:
+                    if edge_enabled:
+                        any_available = True
+                    continue
+
+                if child_cosmetic_only and child_affected:
+                    key = _entry_key(record)
+
+                    if key in _blocked_keys:
+                        continue
+
+                    try:
+                        original = _original_for(record)
+                        mode = _weight_mode(original)
+                    except Exception as exc:
+                        _report_once(
+                            f"edge-weight:{key}",
+                            f"could not inspect exhausted child edge {key}; "
+                            f"leaving parent edge untouched: {type(exc).__name__}: {exc}",
+                        )
+                        continue
+
+                    if mode == "disabled":
+                        continue
+
+                    if mode in ("constant", "attribute"):
+                        desired[key] = (record, mode)
+                        stats["exhausted_edge_candidates"] += 1
+                    else:
+                        _report_once(
+                            f"unsupported-edge:{key}",
+                            f"unsupported exhausted-child edge weight; "
+                            f"leaving parent edge untouched at {key}",
+                        )
                 continue
 
-            child_available = pool_available(record["child_path"])
-            if child_available:
-                # The subtree has an eligible leaf, but an edge which was already
-                # disabled before our scan is still not reachable from this parent.
-                edge_mode = _weight_mode(_original_for(record))
-                if edge_mode != "disabled":
+            balance_kind = record["balance_kind"]
+
+            if balance_kind in ("cosmetic", "cosmetic_unmapped"):
+                leaf_id = (
+                    record["pool_path"],
+                    record["index"],
+                    record["balance_path"],
+                )
+                leaf_available, _is_cosmetic, leaf_affected = leaf_state.get(
+                    leaf_id,
+                    (True, True, False),
+                )
+                if leaf_available:
                     any_available = True
+                affected = affected or leaf_affected
                 continue
 
-            # Child is exhausted for this source. Disable only this exact parent edge.
-            key = _entry_key(record)
-            if key in _blocked_keys:
-                raise RuntimeError(f"externally conflicted exhausted edge {key}")
-            original = _original_for(record)
-            mode = _weight_mode(original)
-            if mode == "disabled":
-                continue
-            if mode not in ("constant", "attribute"):
-                raise RuntimeError(f"unsupported exhausted-edge weight shape at {key}")
-            desired[key] = (record, mode)
+            cosmetic_only = False
+            if _entry_enabled(record):
+                any_available = True
 
         visiting.remove(pool_path)
-        memo[pool_path] = any_available
-        return any_available
 
-    try:
-        pool_available(WORLD_POOL_PATH)
-    except RuntimeError as exc:
-        return {}, str(exc)
+        if not saw_entry:
+            cosmetic_only = False
 
-    return desired, None
+        result = (any_available, cosmetic_only, affected)
+        memo[pool_path] = result
+        return result
+
+    for pool_path in list(_pool_nodes):
+        pool_state(pool_path)
+
+    return desired, stats
 
 
-def _reconcile() -> bool:
-    desired, blocker = _plan_desired_mutations()
-    if blocker is not None:
-        _report_once(f"plan-blocker:{blocker}", f"filter plan rejected: {blocker}")
-        _restore_all()
-        return False
-
+def _reconcile() -> dict[str, int] | None:
+    desired, stats = _plan_desired_mutations()
     desired_keys = set(desired)
 
-    # Restore entries which are no longer owned/exhausted before applying new filters.
     for key, record in list(_managed.items()):
         if key not in desired_keys:
             _restore_record(key, record)
 
-    # Apply leaves/edges selected by the current source-local ownership plan.
+    applied_leaf = 0
+    applied_edge = 0
+
     for key, (record, mode) in desired.items():
-        if not _apply_record(record, mode):
-            _restore_all()
-            return False
+        if _apply_record(record, mode):
+            if key[2] == "leaf":
+                applied_leaf += 1
+            else:
+                applied_edge += 1
 
-    return True
+    stats["filtered_leaves"] = applied_leaf
+    stats["exhausted_edges"] = applied_edge
+    stats["blocked"] = len(_blocked_keys)
+    return stats
 
 
-def _refresh() -> None:
-    global _graph_ready
+def _refresh(now: float) -> None:
+    global _last_discovery, _startup_reported
 
-    if not _graph_ready:
-        if not _collect_graph():
+    if (
+        not _graph_ready
+        or _last_discovery == 0.0
+        or now - _last_discovery >= DISCOVERY_INTERVAL_SECONDS
+    ):
+        _last_discovery = now
+        if not _discover_loaded_graph():
             _restore_all()
             return
-        if not _rebuild_customization_map():
-            _graph_ready = False
-            _restore_all()
-            return
-    else:
-        wanted = {record["balance_path"] for record in _leaf_records.values()}
-        if wanted.difference(_customization_by_balance):
-            if not _rebuild_customization_map():
-                _restore_all()
-                return
 
-    global _startup_reported
-
-    if not _reconcile():
+    stats = _reconcile()
+    if stats is None:
         return
 
     if not _startup_reported:
-        owned_leaves = 0
-        for record in _leaf_records.values():
-            try:
-                if _owned(record["balance_path"]) is True:
-                    owned_leaves += 1
-            except Exception:
-                pass
+        mapped_cosmetic = sum(
+            1 for record in _cosmetic_leaf_records.values()
+            if record["balance_kind"] == "cosmetic"
+        )
+        unmapped_cosmetic = len(_cosmetic_leaf_records) - mapped_cosmetic
 
-        filtered_leaves = sum(1 for key in _managed if key[2] == "leaf")
-        exhausted_edges = sum(1 for key in _managed if key[2] == "edge")
         logging.info(
-            "[NoDuplicateCosmetics] READY candidate=0.1.2 "
-            f"pools={len(_pool_nodes)} leaves={len(_leaf_records)} "
-            f"mapped={len(_customization_by_balance)} owned={owned_leaves} "
-            f"filtered_leaves={filtered_leaves} exhausted_edges={exhausted_edges} "
-            f"blocked={len(_blocked_keys)}"
+            "[NoDuplicateCosmetics] READY candidate=0.2.0 "
+            f"loaded_pools={len(_pool_nodes)} "
+            f"cosmetic_leaves={len(_cosmetic_leaf_records)} "
+            f"mapped_cosmetic={mapped_cosmetic} "
+            f"unmapped_cosmetic={unmapped_cosmetic} "
+            f"owned={stats['owned']} "
+            f"filtered_leaves={stats['filtered_leaves']} "
+            f"exhausted_edges={stats['exhausted_edges']} "
+            f"unsupported_owned={stats['unsupported_owned']} "
+            f"ownership_unresolved={stats['ownership_unresolved']} "
+            f"blocked={stats['blocked']} "
+            f"cycles={stats['cycles']}"
         )
         _startup_reported = True
 
@@ -670,6 +857,7 @@ def _player_identity() -> tuple[str, int | None] | None:
                 return None
         except Exception:
             pass
+
         return _path(pc), getattr(pc, "InternalIndex", None)
     except Exception:
         return None
@@ -682,36 +870,46 @@ def _hud_frame(
     _ret: Any,
     _func: BoundFunction,
 ) -> None:
-    global _pc_identity, _ready_since, _last_refresh, _graph_ready
+    global _pc_identity, _ready_since, _last_refresh, _last_discovery
+    global _graph_ready, _startup_reported, _last_topology_summary
 
     now = time.monotonic()
     identity = _player_identity()
+
     if identity is None:
         _ready_since = None
         return
 
     if _pc_identity != identity:
-        # A different local controller/profile context must never inherit a stale
-        # ownership plan. Restore what we own, then rebuild lazily for the new player.
         _restore_all()
+
         _pc_identity = identity
         _ready_since = now
         _last_refresh = 0.0
+        _last_discovery = 0.0
         _graph_ready = False
+        _startup_reported = False
+        _last_topology_summary = None
+
+        _pool_nodes.clear()
+        _cosmetic_leaf_records.clear()
         _customization_by_balance.clear()
         return
 
     if _ready_since is None:
         _ready_since = now
         return
+
     if now - _ready_since < PLAYER_SETTLE_SECONDS:
         return
+
     if now - _last_refresh < REFRESH_INTERVAL_SECONDS:
         return
+
     _last_refresh = now
 
     try:
-        _refresh()
+        _refresh(now)
     except Exception as exc:
         _report_once(
             f"refresh-exception:{type(exc).__name__}:{exc}",
@@ -721,22 +919,30 @@ def _hud_frame(
 
 
 def on_enable() -> None:
-    global _root_pool, _graph_ready, _pc_identity, _ready_since, _last_refresh
-    global _startup_reported
+    global _graph_ready, _pc_identity, _ready_since, _last_refresh, _last_discovery
+    global _startup_reported, _last_topology_summary
 
-    _root_pool = None
+    _restore_all()
+
     _graph_ready = False
     _pool_nodes.clear()
-    _leaf_records.clear()
+    _cosmetic_leaf_records.clear()
     _customization_by_balance.clear()
     _managed.clear()
     _blocked_keys.clear()
     _reported_errors.clear()
+
     _pc_identity = None
     _ready_since = None
     _last_refresh = 0.0
+    _last_discovery = 0.0
     _startup_reported = False
-    logging.info("[NoDuplicateCosmetics] ENABLED candidate=0.1.2 waiting_for_player")
+    _last_topology_summary = None
+
+    logging.info(
+        "[NoDuplicateCosmetics] ENABLED candidate=0.2.0 "
+        "scope=loaded-item-pool-graphs waiting_for_player"
+    )
 
 
 def on_disable() -> None:
