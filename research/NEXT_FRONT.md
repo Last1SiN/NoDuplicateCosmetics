@@ -1,54 +1,55 @@
 # Next bounded front
 
-The generic non-world source discovery boundary is now closed sufficiently to start a production-shaped generalized filter.
+The generic loaded-pool production candidate has passed its **initialization/reconcile** boundary.
 
-Runtime evidence from `NoDuplicateCosmeticsSourceDiscovery 0.1.0`:
+Runtime evidence from `NoDuplicateCosmetics 0.2.0`:
 
-- **41 concrete cosmetic-bearing source bindings** were observed with **0 scanner errors**;
-- source classes included **15 mission reward**, **9 AI death-loot**, **11 lootable-balance**, and **6 runtime lootable** bindings;
-- **58 top-level cosmetic-bearing pool candidates** were classified with no unresolved graph entries;
-- real observed topologies include dedicated cosmetic mission pools, nested cosmetic slot-machine pools, the already-known nested stock-world root, and mixed cosmetic/non-cosmetic chest pools;
-- loaded candidates additionally cover base-game crew-challenge content and multiple `/Game/PatchDLC/...` families.
+- `loaded_pools=717`;
+- `cosmetic_leaves=218`;
+- `mapped_cosmetic=218`;
+- `unmapped_cosmetic=0`;
+- active profile `owned=1`;
+- `filtered_leaves=1`;
+- `exhausted_edges=0`;
+- `unsupported_owned=0`;
+- `ownership_unresolved=0`;
+- `blocked=0`;
+- `cycles=0`.
 
-Evidence: `research/results/generic-source-discovery-0.1.0.md`.
+Evidence: `research/results/generic-loaded-pool-init-0.2.0.md`.
 
-## Current bounded front: generic loaded-pool production filter 0.2.0
+## Current bounded front: representative topology validation for 0.2.0
 
-Generalize the proven 0.1.2 filter from one hard-coded root to the set of **currently loaded `ItemPoolData` graphs**.
+Do **not** claim generic all-source support from initialization alone.
 
-The production candidate must remain graph-preserving and source-local:
+Run a separate development-only validator alongside the production candidate. The validator may issue throttled stock `SpawnLootAsync` requests for observation, but it must not mutate loot weights, `Quantity`, `PoolProbability`, source selection counts, attachment probabilities, profile state, mission state, or production state.
 
-1. Discover loaded item pools periodically so newly loaded map/DLC content can join without hard-coded paths.
-2. Build one deduplicated directed graph keyed by live pool path.
-3. Distinguish direct cosmetic leaves, direct non-cosmetic leaves, and child-pool edges.
-4. Query ownership only for cosmetic leaves using the three proven APIs.
-5. For a supported owned cosmetic leaf, apply the already-proven weight transform:
-   - simple constant -> `BaseValueConstant = 0`;
-   - attribute-backed/no-table/no-initializer -> `BaseValueConstant = 0` and `BaseValueScale = 0`.
-6. Leave non-cosmetic leaves untouched and eligible.
-7. Unsupported/unmapped cosmetic leaves fail open locally: leave their vanilla weight untouched and keep that branch reachable; do not reject or restore unrelated graphs.
-8. Recursively propagate a child as exhausted only when its graph has no remaining available result; disable only the exact parent `BalancedItems` edge and only when that edge has a supported weight shape.
-9. Never add entries, redirect to foreign pools, or broaden source reachability.
-10. Never write pool `Quantity`, source `PoolProbability`, source selection count, attachment probability, mission state, profile state, or pickup state.
-11. Preserve exact guarded ownership/restore per managed `BalancedItems` entry. If another mod changes a managed weight after filtering, stop managing that entry rather than overwriting the external value.
-12. Keep normal operation quiet except a bounded READY/refresh summary and errors.
+Representative source-local roots:
 
-## Validation boundary for 0.2.0
+1. **Dedicated mission cosmetic** — base-game mission weapon-trinket pool.
+2. **Nested cosmetic** — slot-machine head pool.
+3. **Mixed cosmetic/non-cosmetic** — red-chest flap pool.
+4. **Stock world regression** — `ItemPool_SkinsAndMisc`.
 
-Do not claim generic all-source support merely because the generalized candidate initializes.
+For every case:
 
-Use a separate read-only validator to inspect representative source-local graphs already proven to exist:
+- rebuild the exact reachable graph;
+- inspect current ownership and verify every owned reachable mapped cosmetic is already disabled by production before sampling;
+- sample only from that exact root;
+- require `owned_hits=0`;
+- require no unresolved ownership results;
+- require no observed balance outside that root's reachable graph;
+- require unowned cosmetics to continue resolving when available;
+- for the mixed chest root, require non-cosmetic results to continue resolving;
+- for the world root, require native no-drop to remain present.
 
-- one dedicated mission cosmetic pool;
-- one nested slot-machine cosmetic pool;
-- one mixed chest pool;
-- the stock-world graph as a regression control.
+Coverage must be reported honestly: if a representative root contains no owned reachable cosmetic for the active profile, mark it as a control-only case instead of treating it as direct duplicate-exclusion proof.
 
-For each representative pool, verify that owned reachable cosmetics are ineligible, unowned/non-cosmetic siblings remain eligible, no foreign content is introduced, and native no-drop/selection semantics remain intact.
+## Boundary after representative topology validation
 
-Still separate later fronts:
+If the four-case validator passes with no semantic regressions, close the generalized loaded-pool selection boundary and move to lifecycle behavior:
 
-- same-session unlock refresh with a real newly learned cosmetic;
-- disable / guarded-restore gameplay validation;
-- multiplayer authority/client behavior;
-- compatibility arbitration when another mod changes a managed weight after filtering.
+1. same-session unlock refresh with a real newly learned cosmetic;
+2. disable / guarded-restore gameplay validation;
+3. multiplayer authority/client behavior;
+4. compatibility arbitration when another mod changes a managed weight after filtering.
