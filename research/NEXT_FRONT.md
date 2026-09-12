@@ -1,6 +1,6 @@
 # Next bounded front
 
-The generalized loaded-pool selection boundary is now closed for the representative topologies exercised by `NoDuplicateCosmeticsTopologyValidator 0.2.1`.
+The generalized loaded-pool selection boundary is closed for the representative topologies exercised by `NoDuplicateCosmeticsTopologyValidator 0.2.1`.
 
 Evidence: `research/results/generic-topology-validator-0.2.1-pass.md`.
 
@@ -17,21 +17,23 @@ Confirmed runtime behavior with `NoDuplicateCosmetics 0.2.0`:
 
 Validate that production reacts correctly when a cosmetic changes from unowned to owned **without restarting the game**.
 
-Use a separate development-only validator. It must not write profile ownership itself.
+`NoDuplicateCosmeticsUnlockRefreshValidator 0.3.0` is retired as physical-pickup proof. Its `InventoryBalanceStateComponent:PostBeginPlay` observation showed only that the target balance state was constructed, not that a real `DroppedInventoryItemPickup` actor existed. See `research/results/same-session-unlock-refresh-validator-0.3.0-contract-correction.md`.
 
-Preferred flow:
+Use corrected validator 0.3.1. It must not write profile ownership or production-managed weights.
 
-1. After player readiness, select a currently unowned cosmetic from a simple dedicated cosmetic pool whose leaf has a supported weight shape.
-2. Confirm the target is currently unowned and its leaf is still eligible.
-3. Spawn one pickup from that exact dedicated pool only to make the test item available; the validator itself must not consume/unlock it.
-4. Wait for the player to pick up and use the cosmetic normally. This user action is the real profile ownership transition.
-5. Detect the native ownership API transition `False -> True` and timestamp it.
-6. Without restarting, verify production changes the exact target leaf to the already-proven disabled signature within the bounded refresh window.
-7. After a quiet settle period, issue a bounded set of requests from the same single-item dedicated pool and require zero target results, proving same-session dedicated-pool exhaustion after the ownership transition.
-8. Do not mutate `Quantity`, `PoolProbability`, source selection count, attachment probability, mission state, pickup ownership state, or any production-managed weight from the validator.
-9. If no suitable unowned dedicated cosmetic exists, fail closed and report that no target was available.
+Required flow:
 
-The validator should choose from several already-observed one-item base-game mission cosmetic pools so it remains usable across different profile states.
+1. After player readiness, select a currently unowned cosmetic from a one-item dedicated cosmetic pool whose leaf has a supported weight shape.
+2. Confirm the target is unowned and its leaf is still at the original eligible weight.
+3. Snapshot existing `DroppedInventoryItemPickup` actors.
+4. Submit one request from the exact target pool.
+5. Require a **new real `DroppedInventoryItemPickup` actor** whose balance component resolves to the exact target balance.
+6. Record actor path/location/distance and require pickup initialization before continuing.
+7. Transfer that exact confirmed pickup into the player's inventory with `GiveInventoryToUser` so an off-screen/misplaced actor cannot block the test. This is test-harness inventory delivery only; it must not unlock the cosmetic or write profile ownership.
+8. Wait for the player to use/learn the cosmetic normally. That native action is the real profile ownership transition.
+9. Detect ownership `False -> True`, timestamp it, and verify production changes the target leaf to the proven disabled signature within the bounded refresh window.
+10. After settling, issue a bounded set of requests from the same one-item dedicated pool and require zero target results.
+11. Never mutate pool `Quantity`, source `PoolProbability`, source selection count, attachment probability, mission state, profile ownership, or any production-managed weight from the validator.
 
 ## Boundary after same-session refresh
 
