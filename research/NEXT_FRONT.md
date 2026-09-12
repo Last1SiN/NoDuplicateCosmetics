@@ -1,41 +1,48 @@
 # Next bounded front
 
-The attribute-backed leaf exclusion boundary is closed, and the first production-shaped implementation candidate now exists on `implementation/stock-world-filter-v0.1`.
+The first production-shaped stock-world implementation is now live and its startup/reconcile path has passed in-game.
 
 ## Candidate under test
 
-`NoDuplicateCosmetics` version `0.1.0` filters only the stock world-cosmetic graph rooted at `ItemPool_SkinsAndMisc`.
+`NoDuplicateCosmetics` version `0.1.2` filters only the stock world-cosmetic graph rooted at `ItemPool_SkinsAndMisc`.
 
-It implements the runtime-confirmed contracts:
+Confirmed production runtime state from the first clean run:
 
-1. Simple constant owned leaves: set `BaseValueConstant = 0`.
-2. Attribute-backed owned leaves of the proven shape: set both `BaseValueConstant = 0` and `BaseValueScale = 0`, preserving `BaseValueAttribute` and all other fields.
-3. Exhausted child pools propagate upward only through the same source-local graph.
-4. Root `Quantity`, external `PoolProbability`, profile data, non-cosmetic entries, and foreign pools remain untouched.
-5. Ownership is refreshed lazily during the session so newly learned cosmetics can become ineligible without restart.
-6. Exact guarded restore is used for every managed weight; later third-party changes are left untouched rather than overwritten.
-7. Unsupported or unresolved weight/ownership shapes fail closed.
+- package imported and enabled successfully;
+- graph traversal resolved **20 pools / 139 cosmetic leaves**;
+- ownership mapping resolved **139/139** leaves;
+- the active profile had **1 owned reachable world cosmetic**;
+- production reconcile filtered exactly **1 owned leaf**;
+- `exhausted_edges=0` for this profile;
+- `blocked=0` and no production error was logged.
 
-The implementation contains no dev spawner, keybinds, console commands, or normal-operation info logging.
+Full evidence: `research/results/production-world-filter-0.1.2.md`.
 
-## Current validation boundary
+## Current validation boundary: observation-only stock-pool runner
 
-Runtime-test the release-shaped candidate itself, not another mutation probe.
+Do not add spawning or diagnostic mutation back into the production candidate.
 
-Required first-pass validation:
+Build a separate development-only validator which runs alongside `NoDuplicateCosmetics 0.1.2` and does **not** mutate any loot weight, Quantity, PoolProbability, ownership/profile state, or production-mod state.
 
-- game loads cleanly with the candidate enabled;
-- no errors from `NoDuplicateCosmetics` appear after entering a character;
-- world cosmetic drops continue to occur normally;
-- the known owned world-drop head `Motosaurus` is not selected while the candidate is active;
-- unowned cosmetics still appear from the same world source;
-- disabling the mod does not crash and guarded restore emits no errors;
-- after learning a previously-unowned world cosmetic during the same session, wait at least one refresh interval and verify it stops being selected without restarting.
+The validator should automatically:
 
-Use a separate development-only stock-pool spawner if rapid sampling is needed; do not add diagnostic spawning back into the production candidate.
+1. wait for a stable local player and for the production filter to have already applied;
+2. traverse/read the live stock world-cosmetic graph and ownership mappings;
+3. confirm that every currently-owned reachable leaf is already in a disabled/excluded live weight state;
+4. select the containing dedicated pool of an owned leaf and sample it, verifying `owned_hits=0` while unowned siblings still resolve;
+5. sample the stock `ItemPool_SkinsAndMisc` root with a sufficiently large batch, recording observed cosmetic ratio, owned hits, unresolved hits, and category diversity;
+6. require `owned_hits=0` and `unresolved=0`; record the world observed/no-drop ratio without forcing a cosmetic on every request;
+7. remain read-only with respect to loot weights and restore nothing, because the validator owns no mutation;
+8. emit one final PASS/REJECT verdict and otherwise avoid manual commands/keybinds.
 
-## After candidate PASS
+This validates the production integration rather than re-testing the old mutation primitives.
 
-Broaden discovery from the single stock world root to exact mission/dedicated/container/DLC cosmetic sources while preserving each source's own reachability graph. Do not claim generic all-source coverage before those source topologies are enumerated and validated.
+## Still pending after this validation
 
-Multiplayer authority/client behavior and deeper compatibility arbitration remain separate later fronts.
+- same-session acquisition refresh using a real newly-learned world cosmetic;
+- disable/restore gameplay validation of the production candidate;
+- generic discovery of mission/dedicated/container/DLC cosmetic sources;
+- multiplayer authority/client behavior;
+- compatibility arbitration for another mod changing a managed weight after `NoDuplicateCosmetics`.
+
+Only after the observation runner passes should the front broaden beyond the stock world root.
