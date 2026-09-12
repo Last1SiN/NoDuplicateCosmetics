@@ -1,55 +1,50 @@
 # Next bounded front
 
-The stock-world production behavior boundary is now closed.
+The generic non-world source discovery boundary is now closed sufficiently to start a production-shaped generalized filter.
 
-`NoDuplicateCosmetics 0.1.2` plus the independent read-only validator confirmed:
+Runtime evidence from `NoDuplicateCosmeticsSourceDiscovery 0.1.0`:
 
-- `20 pools / 139 leaves / 139 ownership mappings`;
-- the active profile had `1` owned reachable world cosmetic and production filtered exactly `1` leaf;
-- direct source-local sampling: `128/128`, `owned_hits=0`, `unresolved=0`, unowned siblings still resolved;
-- world root sampling: `512` requests -> `235` cosmetic observations (`0.4590`), `owned_hits=0`, `unresolved=0`, `63` distinct cosmetics;
-- all three ownership classes appeared;
-- native world-root no-drop remained present;
-- validator performed no mutation.
+- **41 concrete cosmetic-bearing source bindings** were observed with **0 scanner errors**;
+- source classes included **15 mission reward**, **9 AI death-loot**, **11 lootable-balance**, and **6 runtime lootable** bindings;
+- **58 top-level cosmetic-bearing pool candidates** were classified with no unresolved graph entries;
+- real observed topologies include dedicated cosmetic mission pools, nested cosmetic slot-machine pools, the already-known nested stock-world root, and mixed cosmetic/non-cosmetic chest pools;
+- loaded candidates additionally cover base-game crew-challenge content and multiple `/Game/PatchDLC/...` families.
 
-Evidence: `research/results/production-world-filter-validator-0.1.0.md`.
+Evidence: `research/results/generic-source-discovery-0.1.0.md`.
 
-## Current bounded front: generic non-world source discovery
+## Current bounded front: generic loaded-pool production filter 0.2.0
 
-Do **not** broaden production mutation yet. First inventory and classify the exact source topologies which can award/drop cosmetics outside the already-covered stock world root.
+Generalize the proven 0.1.2 filter from one hard-coded root to the set of **currently loaded `ItemPoolData` graphs**.
 
-Source-first class surfaces confirmed from generated headers:
+The production candidate must remain graph-preserving and source-local:
 
-1. **Mission rewards** — `UOakBaseMissionRewardData.ItemPoolReward` is a soft `UItemPoolData` reference.
-2. **Dedicated enemy death loot** — `UAIBalanceStateComponent.DropOnDeathItemPools` and `CharacterExpansionDropOnDeathItemPools` are `FItemPoolCollection` sources; `FItemPoolCollection` contains direct `FItemPoolInfo` entries and `UItemPoolListData` references.
-3. **Lootables / containers** — `ULootableComponent` is initialized from `ULootableBalanceData`; loot configurations contain `FLootAttachmentInfo`, whose `ItemPool` points to a `UItemPoolData`. Runtime `LootConfigurations` can also be inspected read-only.
-4. **DLC/event source variants** — treat `/Game/PatchDLC/...` pools exactly like base-game pools, but preserve the original source owner and graph; do not fold them into a global cosmetic pool.
+1. Discover loaded item pools periodically so newly loaded map/DLC content can join without hard-coded paths.
+2. Build one deduplicated directed graph keyed by live pool path.
+3. Distinguish direct cosmetic leaves, direct non-cosmetic leaves, and child-pool edges.
+4. Query ownership only for cosmetic leaves using the three proven APIs.
+5. For a supported owned cosmetic leaf, apply the already-proven weight transform:
+   - simple constant -> `BaseValueConstant = 0`;
+   - attribute-backed/no-table/no-initializer -> `BaseValueConstant = 0` and `BaseValueScale = 0`.
+6. Leave non-cosmetic leaves untouched and eligible.
+7. Unsupported/unmapped cosmetic leaves fail open locally: leave their vanilla weight untouched and keep that branch reachable; do not reject or restore unrelated graphs.
+8. Recursively propagate a child as exhausted only when its graph has no remaining available result; disable only the exact parent `BalancedItems` edge and only when that edge has a supported weight shape.
+9. Never add entries, redirect to foreign pools, or broaden source reachability.
+10. Never write pool `Quantity`, source `PoolProbability`, source selection count, attachment probability, mission state, profile state, or pickup state.
+11. Preserve exact guarded ownership/restore per managed `BalancedItems` entry. If another mod changes a managed weight after filtering, stop managing that entry rather than overwriting the external value.
+12. Keep normal operation quiet except a bounded READY/refresh summary and errors.
 
-The first discovery implementation must be a separate development-only, read-only `.sdkmod` and must not mutate weights, `Quantity`, `PoolProbability`, mission/profile state, or production-mod state.
+## Validation boundary for 0.2.0
 
-It should automatically, after player readiness:
+Do not claim generic all-source support merely because the generalized candidate initializes.
 
-- enumerate loaded `ItemPoolData` assets and classify every graph containing cosmetic leaves;
-- enumerate loaded `OakBaseMissionRewardData` subclasses and record `ItemPoolReward` sources whose graph can reach cosmetics;
-- enumerate loaded `AIBalanceStateComponent` objects and inspect both death-loot collections plus nested item-pool lists;
-- enumerate loaded `LootableBalanceData`, `LootListData`, and runtime `LootableComponent` configurations and record item-pool attachments whose graph can reach cosmetics;
-- classify each discovered root as `dedicated_cosmetic`, `mixed_cosmetic_noncosmetic`, or `nested_cosmetic`;
-- record exact owner path, source field, root pool path, child-pool count, cosmetic/non-cosmetic leaf counts, unresolved entries, and package family (`/Game` vs `/Game/PatchDLC/...`);
-- emit each unique source once and produce a compact summary;
-- fail closed on unreadable/unresolved structures;
-- never spawn loot and never change any live object.
+Use a separate read-only validator to inspect representative source-local graphs already proven to exist:
 
-Repeated scans are allowed only to discover newly-loaded map/DLC packages; avoid periodic duplicate spam.
+- one dedicated mission cosmetic pool;
+- one nested slot-machine cosmetic pool;
+- one mixed chest pool;
+- the stock-world graph as a regression control.
 
-## Boundary after discovery
-
-Only after concrete source families/topologies are observed should production filtering be generalized. The generalized filter must operate on each exact source-local graph and preserve:
-
-- original source reachability;
-- source `PoolProbability` / selection count semantics;
-- pool `Quantity` / no-drop semantics;
-- non-cosmetic entries in mixed pools;
-- exact guarded restore ownership.
+For each representative pool, verify that owned reachable cosmetics are ineligible, unowned/non-cosmetic siblings remain eligible, no foreign content is introduced, and native no-drop/selection semantics remain intact.
 
 Still separate later fronts:
 
