@@ -1,60 +1,58 @@
-# NoDuplicateCosmetics 0.1.2 Candidate
+# NoDuplicateCosmetics 0.2.0 Candidate
 
-First production-shaped candidate for Borderlands 3.
+Generic loaded-pool production candidate for Borderlands 3.
 
 ## Current scope
 
-This candidate filters the vanilla world-cosmetic graph rooted at `ItemPool_SkinsAndMisc`.
-It is intentionally not yet advertised as covering every mission, dedicated, container,
-or DLC-specific cosmetic source.
+0.2.0 generalizes the already validated stock-world filter. Instead of being rooted
+only at `ItemPool_SkinsAndMisc`, it periodically discovers currently loaded
+`ItemPoolData` assets and filters supported owned cosmetic leaves in their existing
+graphs.
+
+This is still a validation candidate, not yet a public all-source release claim.
 
 ## Behavior
 
-- Already-owned cosmetics become ineligible before the game's native weighted selection.
-- Rerolls remain inside the original source-reachable loot graph.
-- Cosmetics are never replaced with an extra weapon roll.
-- The source pool's native `Quantity`/no-drop behavior is left untouched.
-- If a child cosmetic pool becomes exhausted, only that exact source-local child branch
-  is made ineligible; exhaustion can propagate upward inside the same graph.
-- If the whole world-cosmetic root is exhausted, the cosmetic roll can resolve to no item.
-- Newly learned cosmetics are picked up by a lazy ownership refresh without restarting.
+- Already-owned supported cosmetic leaves become ineligible before native selection.
+- Direct non-cosmetic entries are never changed.
+- No entries are added and no pool is redirected to another pool.
+- Child-pool exhaustion propagates upward only when the child is cosmetic-only,
+  has no remaining result, and was exhausted at least partly by this mod.
+- Unknown/unloaded child graphs remain reachable.
+- Unmapped cosmetics and unsupported weight shapes fail open locally: their vanilla
+  eligibility remains untouched instead of rejecting unrelated pools.
+- Newly loaded maps/DLC pools are discovered periodically.
+- Ownership is re-queried every second so newly learned mapped cosmetics can become
+  ineligible without a game restart.
 
-## Safety / compatibility policy
+## Weight transforms
 
-The candidate only mutates runtime `FAttributeInitializationData` shapes which have been
-verified in-game:
+Only the two runtime-proven `FAttributeInitializationData` forms are mutated:
 
-- simple constant weight: `BaseValueConstant -> 0`;
-- attribute-backed weight with no DataTable/AttributeInitializer: both
-  `BaseValueConstant -> 0` and `BaseValueScale -> 0`, preserving the attribute pointer.
+- simple constant: `BaseValueConstant -> 0`;
+- attribute-backed with no DataTable/AttributeInitializer:
+  `BaseValueConstant -> 0` and `BaseValueScale -> 0`.
 
-Unknown weight shapes fail closed. `Quantity`, `PoolProbability`, profile data,
-non-cosmetic entries, and foreign pools are never modified.
+`BaseValueAttribute` and all other fields are preserved.
 
-Every touched weight keeps its exact captured original signature. Restore only occurs
-while the current value still matches the filtered state owned by this mod; a later
-third-party change is not overwritten.
+## Safety / compatibility
 
-## Installation
+The mod never writes pool `Quantity`, source `PoolProbability`, source selection count,
+loot-attachment probability, mission state, pickup state, or profile ownership.
 
-Copy `NoDuplicateCosmetics.sdkmod` unchanged into the game's `sdk_mods` directory and
-enable it in the Mod Menu.
+Every managed weight stores its exact captured original and filtered signatures.
+Restore happens only while the live value still matches this mod's filtered state.
+A later third-party change is left untouched and that entry becomes blocked from further
+management for the session.
 
 ## Test status
 
-The underlying world-pool, ownership, leaf exclusion, exhausted-pool propagation, and
-attribute-backed exclusion mechanics were validated with bounded runtime probes.
-This 0.1.2 package is the first release-shaped integration candidate and still needs
-ordinary gameplay validation before public release.
+Stock-world selection semantics already passed independently. 0.2.0 now requires
+representative runtime validation of:
 
-## Candidate diagnostics
+- a dedicated mission cosmetic pool;
+- a nested slot-machine cosmetic pool;
+- a mixed chest pool;
+- the stock-world pool as a regression control.
 
-This validation candidate emits only three normal informational lines:
-`LOADED` on module import, `ENABLED` when the package is enabled, and one `READY`
-verdict after the first successful ownership/filter reconcile. Periodic refreshes
-remain silent unless an error occurs.
-
-The three states are intentionally distinguishable:
-- no `LOADED`: the `.sdkmod` was not discovered/imported;
-- `LOADED` but no `ENABLED`: the mod exists but is disabled;
-- `LOADED` + `ENABLED` + `READY`: the production filter initialized successfully.
+Co-op support remains Unknown.
