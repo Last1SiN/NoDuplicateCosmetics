@@ -1,1 +1,2 @@
-generic-loaded-pool-filter-v0.2: ACTIVE
+compatibility-arbitration-0.5.0: PASS
+next: multiplayer-authority-client-v0.1
