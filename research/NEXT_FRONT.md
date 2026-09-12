@@ -1,44 +1,46 @@
 # Next bounded front
 
-The generalized loaded-pool selection boundary is closed for the representative topologies exercised by `NoDuplicateCosmeticsTopologyValidator 0.2.1`.
+The generalized loaded-pool selection boundary and the same-session real ownership refresh boundary are now closed for the exercised cases.
 
-Evidence: `research/results/generic-topology-validator-0.2.1-pass.md`.
+Evidence:
 
-Confirmed runtime behavior with `NoDuplicateCosmetics 0.2.0`:
+- `research/results/generic-topology-validator-0.2.1-pass.md`
+- `research/results/same-session-unlock-refresh-0.3.1-pass.md`
 
-- dedicated mission cosmetic source remained source-local;
-- nested slot-machine pool excluded the owned cosmetic and continued resolving unowned siblings;
-- mixed red-chest pool excluded the owned cosmetic while continuing to resolve non-cosmetic loot;
-- stock world root retained native no-drop;
-- all sampled covered cases had `owned_hits=0`, `unresolved=0`, and `foreign=0`;
-- production initialization remained clean at `717 loaded pools / 218 mapped cosmetic leaves`.
+Confirmed with `NoDuplicateCosmetics 0.2.0`:
 
-## Current bounded front: same-session real ownership refresh
+- representative dedicated, nested, mixed, and stock-world source-local selection semantics passed;
+- a real one-item mission trinket pickup was physically created and transferred into inventory;
+- the player learned that trinket normally, causing native ownership `False -> True`;
+- production filtered the newly-owned exact leaf in the same running session after `384.6 ms`;
+- 32 requests from the now-exhausted dedicated pool produced `target_hits=0`;
+- no validator profile mutation occurred.
 
-Validate that production reacts correctly when a cosmetic changes from unowned to owned **without restarting the game**.
+## Current bounded front: disable / normal guarded restore
 
-`NoDuplicateCosmeticsUnlockRefreshValidator 0.3.0` is retired as physical-pickup proof. Its `InventoryBalanceStateComponent:PostBeginPlay` observation showed only that the target balance state was constructed, not that a real `DroppedInventoryItemPickup` actor existed. See `research/results/same-session-unlock-refresh-validator-0.3.0-contract-correction.md`.
+Validate production lifecycle ownership around a real managed leaf without changing persistent mod settings.
 
-Use corrected validator 0.3.1. It must not write profile ownership or production-managed weights.
+Use a separate development-only validator which may drive the `mods_base.Mod` enable/disable methods, but must not write the target weight directly.
 
-Required flow:
+Preferred fully automatic flow:
 
-1. After player readiness, select a currently unowned cosmetic from a one-item dedicated cosmetic pool whose leaf has a supported weight shape.
-2. Confirm the target is unowned and its leaf is still at the original eligible weight.
-3. Snapshot existing `DroppedInventoryItemPickup` actors.
-4. Submit one request from the exact target pool.
-5. Require a **new real `DroppedInventoryItemPickup` actor** whose balance component resolves to the exact target balance.
-6. Record actor path/location/distance and require pickup initialization before continuing.
-7. Transfer that exact confirmed pickup into the player's inventory with `GiveInventoryToUser` so an off-screen/misplaced actor cannot block the test. This is test-harness inventory delivery only; it must not unlock the cosmetic or write profile ownership.
-8. Wait for the player to use/learn the cosmetic normally. That native action is the real profile ownership transition.
-9. Detect ownership `False -> True`, timestamp it, and verify production changes the target leaf to the proven disabled signature within the bounded refresh window.
-10. After settling, issue a bounded set of requests from the same one-item dedicated pool and require zero target results.
-11. Never mutate pool `Quantity`, source `PoolProbability`, source selection count, attachment probability, mission state, profile ownership, or any production-managed weight from the validator.
+1. After player readiness, find the running `NoDuplicateCosmetics` mod instance through `mods_base.get_ordered_mod_list()` and require it to be enabled.
+2. Select an owned cosmetic leaf from a known one-item dedicated pool which is currently in the production-filtered signature.
+3. Record the filtered signature.
+4. Call `production.disable(dont_update_setting=True)` so production executes its real `on_disable -> _restore_all` path without changing persistent enable settings.
+5. Require the target leaf to return to a supported positive eligible signature within a bounded window; record this as the restored/original signature.
+6. Optionally issue one bounded request from the exact one-item pool while production is disabled and require the target to resolve, proving the restored weight is operational in the native resolver.
+7. Call `production.enable()` in the same session.
+8. Require the exact target leaf to return to the expected filtered signature computed from the observed restored signature.
+9. After settling, issue a bounded request set from the same dedicated pool and require zero target results again.
+10. On validator failure or validator disable, always make a best-effort attempt to leave production enabled.
+11. The validator must not mutate `BaseValueConstant`, `BaseValueScale`, pool `Quantity`, source probabilities/counts, profile ownership, or production internal state directly.
 
-## Boundary after same-session refresh
+This front validates the ordinary restore path. It does **not** yet inject a third-party conflicting weight.
 
-If the real unlock transition passes, proceed to:
+## Boundary after disable / normal restore
 
-1. disable / guarded-restore gameplay validation;
-2. multiplayer authority/client behavior;
-3. compatibility arbitration when another mod changes a managed weight after filtering.
+If this passes, proceed to:
+
+1. multiplayer authority/client behavior;
+2. compatibility arbitration / external-conflict guarded restore, where a separate test component changes a production-managed weight after filtering and production must leave that external value untouched rather than restoring over it.
