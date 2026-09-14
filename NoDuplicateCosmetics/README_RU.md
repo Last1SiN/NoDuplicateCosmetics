@@ -2,23 +2,16 @@
 
 [English](README_EN.md) | [Русский](README_RU.md)
 
-NoDuplicateCosmetics — мод для Borderlands 3 PythonSDK, который не даёт уже открытым поддерживаемым косметическим предметам снова участвовать в выборе лута, сохраняя штатную source-local механику выпадений игры.
+NoDuplicateCosmetics — мод для Borderlands 3 PythonSDK, который не даёт уже открытым косметическим предметам снова участвовать в выборе лута, сохраняя штатную source-local механику выпадений игры.
 
 Вместо замены отклонённой косметики на посторонний лут мод делает уже открытые cosmetic entries недоступными **до native loot selection**, не меняя исходную структуру пулов, reachability, вероятности и количество выборов.
 
 ## Возможности
 
-- Исключает уже открытые поддерживаемые cosmetics до native loot selection.
+- Исключает уже открытые косметические предметы до выбора лута при выпадении.
 - Сохраняет штатный source-local loot graph и reachability каждого источника.
-- Не заменяет заблокированную косметику оружием или другим несвязанным предметом.
-- В mixed gear + cosmetic pools штатный resolver игры продолжает выбирать среди оставшихся eligible entries.
+- В mixed gear + cosmetic pools штатный resolver игры продолжает выбирать лут.
 - Если dedicated cosmetic branch полностью исчерпан, из этой ветки просто не выпадает cosmetic.
-- При исчерпании nested cosmetic-only pool отключается только точный parent edge, ведущий к этому child pool.
-- Обновляет ownership после открытия косметики в той же игровой сессии.
-- Подхватывает новые загруженные loot sources через event-driven hooks без периодического полного сканирования графа.
-- Guarded restore не перезаписывает более позднее изменение weight, сделанное другим модом.
-- Unsupported или unresolved cosmetic/weight shapes локально fail-open и не блокируют несвязанный лут.
-- При обычной работе пишет в лог только ошибки.
 
 ## Требования
 
@@ -39,11 +32,10 @@ NoDuplicateCosmetics — мод для Borderlands 3 PythonSDK, который �
 
 ## Совместимость и лицензия
 
-- Проверенный scope: **single-player / local-player use**.
+- Мод не заменяет отфильтрованную косметику посторонним лутом.
+- Структура пулов, source-local reachability, вероятности и количество выборов остаются штатными.
 - Кооператив: **Unknown** — поведение в co-op пока не валидировалось.
-- Мод не пишет pool `Quantity`, source `PoolProbability`, source selection counts, mission state, pickup state или profile ownership.
-- Release 0.2.3 runtime-проверен на dedicated, nested, mixed и world-drop topology, late-loaded source recovery, same-session unlock refresh, disable/restore и third-party weight-conflict arbitration.
-- Лицензия: **GNU GPLv3**.
+- Лицензия: **GNU GPLv3 с [дополнительными условиями Section 7 о происхождении разработки](https://github.com/Last1SiN/TrueFastball/blob/main/ADDITIONAL_TERMS.md)**
 
 ## Credits
 
