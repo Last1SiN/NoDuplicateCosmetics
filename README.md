@@ -2,23 +2,16 @@
 
 [English](README.md) | [Русский](README_RU.md)
 
-NoDuplicateCosmetics is a Borderlands 3 PythonSDK mod which prevents already-owned supported cosmetics from being selected again while preserving the game's native, source-local loot behavior.
+NoDuplicateCosmetics is a Borderlands 3 PythonSDK mod which prevents already-owned cosmetics from being selected again while preserving the game's native, source-local loot behavior.
 
 Instead of replacing a rejected cosmetic with unrelated loot, the mod makes owned cosmetic entries ineligible **before native loot selection** and leaves the original pool structure, reachability, probabilities and selection counts intact.
 
 ## Features
 
-- Filters already-owned supported cosmetics before native loot selection.
+- Filters already-owned cosmetics before loot selection on drop.
 - Preserves each source's native, source-local loot graph and reachability.
-- Does not replace a blocked cosmetic with a gun or another unrelated item.
-- Mixed gear + cosmetic pools continue through the game's native resolver among the remaining eligible entries.
+- Mixed gear + cosmetic pools continue through the game's native resolver.
 - An exhausted dedicated cosmetic branch produces no cosmetic from that branch.
-- Nested cosmetic-only exhaustion can disable only the exact parent edge leading to the exhausted child pool.
-- Refreshes ownership after a cosmetic is unlocked during the same game session.
-- Detects newly loaded loot sources through event-driven hooks instead of periodic full graph polling.
-- Uses guarded restore logic so a later third-party weight change is not overwritten.
-- Unsupported or unresolved cosmetic/weight shapes fail open locally instead of blocking unrelated loot.
-- Normal gameplay logging is limited to errors.
 
 ## Requirements
 
@@ -39,11 +32,10 @@ To update NoDuplicateCosmetics, replace the existing `.sdkmod` with the newer ca
 
 ## Compatibility and license
 
-- Validated scope: **single-player / local-player use**.
+- The mod does not replace filtered cosmetics with unrelated loot.
+- Pool structure, source-local reachability, probabilities and selection counts remain unchanged.
 - Co-op support: **Unknown** — co-op behavior has not yet been validated.
-- The mod does not write pool `Quantity`, source `PoolProbability`, source selection counts, mission state, pickup state or profile ownership.
-- Release 0.2.3 was runtime-validated against dedicated, nested, mixed and world-drop topology, late-loaded source recovery, same-session unlock refresh, disable/restore and third-party weight-conflict arbitration.
-- License: **GNU GPLv3**.
+- License: **GNU GPLv3 with [Section 7 additional provenance terms](https://github.com/Last1SiN/TrueFastball/blob/main/ADDITIONAL_TERMS.md)**
 
 ## Credits
 
