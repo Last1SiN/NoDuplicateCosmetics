@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - release/single-player-0.2.3
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate source, metadata and sdkmod layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import tomllib
+          import zipfile
+
+          root = Path('NoDuplicateCosmetics')
+          source = root / '__init__.py'
+          metadata = root / 'pyproject.toml'
+
+          # Syntax check without writing __pycache__.
+          text = source.read_text(encoding='utf-8')
+          compile(text, str(source), 'exec')
+
+          data = tomllib.loads(metadata.read_text(encoding='utf-8'))
+          project = data['project']
+          sdkmod = data['tool']['sdkmod']
+          assert project['name'] == 'NoDuplicateCosmetics'
+          assert sdkmod['name'] == 'NoDuplicateCosmetics'
+          assert project['version'] == sdkmod['version']
+          assert sdkmod['coop_support'] == 'Unknown'
+          assert sdkmod['supported_games'] == ['BL3']
+
+          forbidden = [p for p in Path('.').rglob('*') if '__pycache__' in p.parts or p.suffix in {'.pyc', '.pyo'}]
+          assert not forbidden, f'generated Python bytecode committed: {forbidden}'
+
+          required = {
+              'NoDuplicateCosmetics/__init__.py',
+              'NoDuplicateCosmetics/pyproject.toml',
+              'NoDuplicateCosmetics/README_EN.md',
+              'NoDuplicateCosmetics/README_RU.md',
+          }
+          assert all(Path(p).is_file() for p in required)
+
+          dist = Path('dist')
+          dist.mkdir(exist_ok=True)
+          archive = dist / 'NoDuplicateCosmetics.sdkmod'
+          with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+              for path in sorted(root.rglob('*')):
+                  if path.is_file() and '__pycache__' not in path.parts and path.suffix not in {'.pyc', '.pyo'}:
+                      zf.write(path, path.as_posix())
+
+          with zipfile.ZipFile(archive) as zf:
+              names = [n for n in zf.namelist() if n and not n.endswith('/')]
+              roots = {n.split('/', 1)[0] for n in names}
+              assert roots == {archive.stem}, (roots, archive.stem)
+              assert required.issubset(set(names))
+
+          print('version:', project['version'])
+          print('source_sha256:', hashlib.sha256(source.read_bytes()).hexdigest())
+          print('sdkmod_layout: PASS')
+          PY
+
+      - name: Verify exact tested 0.2.3 production source
+        if: github.ref_name == 'release/single-player-0.2.3' || github.head_ref == 'release/single-player-0.2.3'
+        shell: bash
+        run: |
+          echo '576ed747bd11cbdf9171dfb666b08dc45519185d76afbff0f5090c7a959cd137  NoDuplicateCosmetics/__init__.py' | sha256sum --check --strict
