@@ -42,6 +42,10 @@ jobs:
           assert sdkmod['coop_support'] == 'Unknown'
           assert sdkmod['supported_games'] == ['BL3']
           assert sdkmod['download'] == 'https://github.com/Last1SiN/NoDuplicateCosmetics/releases/latest/download/NoDuplicateCosmetics.sdkmod'
+          terms_url = 'https://github.com/Last1SiN/TrueFastball/blob/main/ADDITIONAL_TERMS.md'
+          assert project['urls']['AdditionalTerms'] == terms_url
+          assert sdkmod['license']['name'] == 'GPL3 + Section 7 terms'
+          assert sdkmod['license']['url'] == terms_url
 
           source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
           if project['version'] == '0.2.3':
@@ -56,11 +60,13 @@ jobs:
               'NoDuplicateCosmetics/README_EN.md',
               'NoDuplicateCosmetics/README_RU.md',
               'NoDuplicateCosmetics/LICENSE',
+              'NoDuplicateCosmetics/ADDITIONAL_TERMS.md',
           }
           assert all(Path(p).is_file() for p in required)
           assert Path('README.md').is_file()
           assert Path('README_RU.md').is_file()
           assert Path('LICENSE').is_file()
+          assert Path('ADDITIONAL_TERMS.md').is_file()
 
           dist = Path('dist')
           dist.mkdir(exist_ok=True)
