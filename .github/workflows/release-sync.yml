@@ -35,7 +35,7 @@ jobs:
             .release-sync/part07 \
             .release-sync/part08 \
             | base64 --decode > NoDuplicateCosmetics/__init__.py
-          echo '3762a2942478fe67a798b86ec91ad13c666bb2a7231221552db4493e6defc29a  NoDuplicateCosmetics/__init__.py' | sha256sum --check --strict
+          echo '576ed747bd11cbdf9171dfb666b08dc45519185d76afbff0f5090c7a959cd137  NoDuplicateCosmetics/__init__.py' | sha256sum --check --strict
           python -m py_compile NoDuplicateCosmetics/__init__.py
 
       - name: Remove temporary sync transport
