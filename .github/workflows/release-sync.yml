@@ -1,0 +1,57 @@
+name: Exact release source sync
+
+on:
+  push:
+    branches:
+      - release/single-player-0.2.3
+    paths:
+      - '.github/workflows/release-sync.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  sync-exact-tested-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reconstruct exact tested production source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat \
+            .release-sync/part00a \
+            .release-sync/part00b \
+            .release-sync/part01 \
+            .release-sync/part02a \
+            .release-sync/part02b \
+            .release-sync/part03 \
+            .release-sync/part04 \
+            .release-sync/part05 \
+            .release-sync/part06 \
+            .release-sync/part07 \
+            .release-sync/part08 \
+            | base64 --decode > NoDuplicateCosmetics/__init__.py
+          echo '3762a2942478fe67a798b86ec91ad13c666bb2a7231221552db4493e6defc29a  NoDuplicateCosmetics/__init__.py' | sha256sum --check --strict
+          python -m py_compile NoDuplicateCosmetics/__init__.py
+
+      - name: Remove temporary sync transport
+        shell: bash
+        run: |
+          rm -rf .release-sync
+          rm -f .github/workflows/release-sync.yml
+          rmdir .github/workflows 2>/dev/null || true
+          rmdir .github 2>/dev/null || true
+
+      - name: Commit exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Sync exact tested NoDuplicateCosmetics 0.2.3 source'
+          git push origin HEAD:release/single-player-0.2.3
