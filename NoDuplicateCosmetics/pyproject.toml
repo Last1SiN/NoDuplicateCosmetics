@@ -11,11 +11,12 @@ maintainers = [
 
 [project.urls]
 Repository = "https://github.com/Last1SiN/NoDuplicateCosmetics"
+AdditionalTerms = "https://github.com/Last1SiN/TrueFastball/blob/main/ADDITIONAL_TERMS.md"
 
 [tool.sdkmod]
 name = "NoDuplicateCosmetics"
 version = "0.2.3"
-license = { name = "GPL3", url = "https://choosealicense.com/licenses/gpl-3.0/" }
+license = { name = "GPL3 + Section 7 terms", url = "https://github.com/Last1SiN/TrueFastball/blob/main/ADDITIONAL_TERMS.md" }
 download = "https://github.com/Last1SiN/NoDuplicateCosmetics/releases/latest/download/NoDuplicateCosmetics.sdkmod"
 coop_support = "Unknown"
 supported_games = ["BL3"]
