@@ -42,7 +42,7 @@ jobs:
           assert sdkmod['coop_support'] == 'Unknown'
           assert sdkmod['supported_games'] == ['BL3']
           assert sdkmod['download'] == 'https://github.com/Last1SiN/NoDuplicateCosmetics/releases/latest/download/NoDuplicateCosmetics.sdkmod'
-          terms_url = 'https://github.com/Last1SiN/TrueFastball/blob/main/ADDITIONAL_TERMS.md'
+          terms_url = 'https://github.com/Last1SiN/NoDuplicateCosmetics/blob/main/ADDITIONAL_TERMS.md'
           assert project['urls']['AdditionalTerms'] == terms_url
           assert sdkmod['license']['name'] == 'GPL3 + Section 7 terms'
           assert sdkmod['license']['url'] == terms_url
