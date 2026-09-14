@@ -1,6 +1,6 @@
 # NoDuplicateCosmetics
 
-[English](README_EN.md) | [Русский](README_RU.md)
+[English](README.md) | [Русский](README_RU.md)
 
 NoDuplicateCosmetics — мод для Borderlands 3 PythonSDK, который не даёт уже открытым поддерживаемым косметическим предметам снова участвовать в выборе лута, сохраняя штатную source-local механику выпадений игры.
 
@@ -30,7 +30,7 @@ NoDuplicateCosmetics — мод для Borderlands 3 PythonSDK, который �
 ## Установка мода
 
 1. Установите или обновите BL3 PythonSDK / Oak по официальной инструкции выше.
-2. Скачайте канонический `NoDuplicateCosmetics.sdkmod` из [GitHub Releases](https://github.com/Last1SiN/NoDuplicateCosmetics/releases/latest).
+2. Скачайте `NoDuplicateCosmetics.sdkmod` из [GitHub Releases](https://github.com/Last1SiN/NoDuplicateCosmetics/releases/latest).
 3. При полностью закрытой Borderlands 3 скопируйте `.sdkmod` целиком в `Borderlands 3\sdk_mods\`. Сам `.sdkmod` не распаковывайте и не переименовывайте.
 4. Если существует распакованная папка `sdk_mods/NoDuplicateCosmetics/`, удалите или обновите её: extracted folder имеет приоритет над одноимённым `.sdkmod`.
 5. Запустите игру, откройте **MODS -> NoDuplicateCosmetics** и включите мод.

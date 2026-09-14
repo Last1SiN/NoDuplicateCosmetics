@@ -1,46 +1,53 @@
 # NoDuplicateCosmetics
 
-NoDuplicateCosmetics is a Borderlands 3 PythonSDK mod which filters already-owned cosmetics out of supported, currently loaded loot graphs **before native loot selection**, while preserving each source's original reachability and selection structure.
+[English](README.md) | [Русский](README_RU.md)
 
-## Release
+NoDuplicateCosmetics is a Borderlands 3 PythonSDK mod which prevents already-owned supported cosmetics from being selected again while preserving the game's native, source-local loot behavior.
 
-Current single-player release: **0.2.3**.
+Instead of replacing a rejected cosmetic with unrelated loot, the mod makes owned cosmetic entries ineligible **before native loot selection** and leaves the original pool structure, reachability, probabilities and selection counts intact.
 
-Validated scope is **single-player / local-player use**. Co-op has not been validated and remains `Unknown`.
+## Features
 
-## Core behavior
+- Filters already-owned supported cosmetics before native loot selection.
+- Preserves each source's native, source-local loot graph and reachability.
+- Does not replace a blocked cosmetic with a gun or another unrelated item.
+- Mixed gear + cosmetic pools continue through the game's native resolver among the remaining eligible entries.
+- An exhausted dedicated cosmetic branch produces no cosmetic from that branch.
+- Nested cosmetic-only exhaustion can disable only the exact parent edge leading to the exhausted child pool.
+- Refreshes ownership after a cosmetic is unlocked during the same game session.
+- Detects newly loaded loot sources through event-driven hooks instead of periodic full graph polling.
+- Uses guarded restore logic so a later third-party weight change is not overwritten.
+- Unsupported or unresolved cosmetic/weight shapes fail open locally instead of blocking unrelated loot.
+- Normal gameplay logging is limited to errors.
 
-- owned supported cosmetics become ineligible before native selection;
-- non-cosmetic entries are not replaced or reweighted;
-- mixed pools continue through the game's native resolver using the remaining source-local entries;
-- exhausted cosmetic-only child pools propagate exhaustion only through the exact parent edge;
-- unsupported/unmapped cases fail open locally;
-- same-session unlocks are refreshed without restarting;
-- late-loaded sources are discovered event-driven, including a last-chance `SpawnLootAsync` / `SpawnLoot` PRE boundary;
-- there is no recurring one-second/five-second full graph scan;
-- guarded restore avoids overwriting a later third-party mutation of the same managed weight.
+## Requirements
 
-The mod does **not** write pool `Quantity`, source `PoolProbability`, source selection counts, mission state, pickup state, or profile ownership. It does not call the game's loot-spawn functions itself.
+- Borderlands 3
+- [BL3 PythonSDK / Oak Mod Manager](https://github.com/bl-sdk/oak-mod-manager/releases/latest)
 
-## Runtime validation
+Use the [official BL3 SDK / Oak installation guide](https://bl-sdk.github.io/oak-mod-db/) for SDK installation and updates.
 
-0.2.3 passed:
+## Installing the mod
 
-- representative dedicated, nested, mixed and world-drop topology tests;
-- late-loaded `SpawnLootAsync` source recovery before native resolution;
-- Graveward structural validation with all 139 reachable cosmetics owned and filtered while normal/dedicated non-cosmetic loot remained reachable;
-- real same-session cosmetic unlock refresh;
-- disable -> exact restore -> re-enable/refilter;
-- external weight-conflict arbitration and guarded restore;
-- final production-only Graveward smoke: **15 kills, 0 cosmetics, normal gear yes, dedicated loot yes, no periodic stutter observed**. The loop ended because Commander stopped producing further Graveward respawns.
+1. Install or update BL3 PythonSDK / Oak using the official guide above.
+2. Download `NoDuplicateCosmetics.sdkmod` from [GitHub Releases](https://github.com/Last1SiN/NoDuplicateCosmetics/releases/latest).
+3. With Borderlands 3 closed, copy the `.sdkmod` file intact to `Borderlands 3\sdk_mods\`. Do not extract or rename the `.sdkmod` itself.
+4. If an extracted `sdk_mods/NoDuplicateCosmetics/` folder exists, remove or update it because an extracted folder takes priority over the same-named `.sdkmod`.
+5. Start the game, open **MODS -> NoDuplicateCosmetics** and enable the mod.
 
-## Installation
+To update NoDuplicateCosmetics, replace the existing `.sdkmod` with the newer canonical file and restart the game.
 
-Place the canonical `NoDuplicateCosmetics.sdkmod` file directly in your BL3 `sdk_mods` directory and restart the game. Do not rename the `.sdkmod`: Oak requires the archive filename stem to match its single root folder name. If an extracted `sdk_mods/NoDuplicateCosmetics/` folder also exists, remove or update it because an extracted folder shadows the same-named `.sdkmod`.
+## Compatibility and license
+
+- Validated scope: **single-player / local-player use**.
+- Co-op support: **Unknown** — co-op behavior has not yet been validated.
+- The mod does not write pool `Quantity`, source `PoolProbability`, source selection counts, mission state, pickup state or profile ownership.
+- Release 0.2.3 was runtime-validated against dedicated, nested, mixed and world-drop topology, late-loaded source recovery, same-session unlock refresh, disable/restore and third-party weight-conflict arbitration.
+- License: **GNU GPLv3**.
 
 ## Credits
 
-Creator / implementation: Sol (ChatGPT, GPT-5.6 Sol)  
-Testing, QA and maintenance: Last1SiN
+**Development:** Sol / GPT-5.6 Sol  
+**Design, testing & QA:** Last1SiN
 
-See `NoDuplicateCosmetics/README_EN.md` and `NoDuplicateCosmetics/README_RU.md` for implementation details.
+**BL3 PythonSDK / Oak Mod Manager:** created by [apple1417](https://github.com/apple1417), with contributions from the [BL-SDK](https://github.com/bl-sdk) project and contributors.
