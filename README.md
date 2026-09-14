@@ -1,36 +1,45 @@
 # NoDuplicateCosmetics
 
-Research and implementation repository for a Borderlands 3 SDK mod which prevents already-owned cosmetics from being selected by supported loot sources while preserving the original source-local loot graph.
+[English](README.md) | [Русский](README_RU.md)
 
-## Core invariant
+NoDuplicateCosmetics is a Borderlands 3 PythonSDK mod which prevents already-owned cosmetics from being selected again while preserving the game's native, source-local loot behavior.
 
-NoDuplicateCosmetics must preserve both the semantics and the reachability of the original loot source. It must not blindly destroy an owned cosmetic after spawn, must not globally convert cosmetic rolls into weapon rolls, and must never introduce a cosmetic which the original source could not drop.
+Instead of replacing a rejected cosmetic with unrelated loot, the mod makes owned cosmetic entries ineligible **before native loot selection** and leaves the original pool structure, reachability, probabilities and selection counts intact.
 
-## Current implementation front
+## Features
 
-`implementation/stock-world-filter-v0.1` contains the first production-shaped candidate, version `0.1.0`.
+- Filters already-owned cosmetics before loot selection on drop.
+- Preserves each source's native, source-local loot graph and reachability.
+- Mixed gear + cosmetic pools continue through the game's native resolver.
+- An exhausted dedicated cosmetic branch produces no cosmetic from that branch.
 
-Current scope is deliberately limited to the vanilla world-cosmetic graph rooted at `ItemPool_SkinsAndMisc`.
+## Requirements
 
-The candidate:
+- Borderlands 3
+- [BL3 PythonSDK / Oak Mod Manager](https://github.com/bl-sdk/oak-mod-manager/releases/latest)
 
-- waits lazily for a loaded local player/profile context;
-- resolves ownership through the three runtime-confirmed APIs for character/ECHO cosmetics, weapon cosmetics, and room decorations;
-- filters owned simple-constant leaves with `BaseValueConstant = 0`;
-- filters the runtime-confirmed attribute-backed shape with `BaseValueConstant = 0` and `BaseValueScale = 0` while preserving the attribute pointer;
-- propagates exhausted child pools upward only through the same source-local graph;
-- never changes source `Quantity`, `PoolProbability`, profile data, non-cosmetic entries, or foreign pools;
-- refreshes ownership during the same session so newly learned cosmetics become ineligible without restarting;
-- uses guarded exact restore and does not overwrite a later third-party mutation of the same weight;
-- fails closed on unresolved ownership or unsupported weight shapes.
+Use the [official BL3 SDK / Oak installation guide](https://bl-sdk.github.io/oak-mod-db/) for SDK installation and updates.
 
-The implementation contains no development spawner, diagnostic keybinds, console commands, or normal-operation info logging.
+## Installing the mod
 
-## Still outside the current candidate
+1. Install or update BL3 PythonSDK / Oak using the official guide above.
+2. Download `NoDuplicateCosmetics.sdkmod` from [GitHub Releases](https://github.com/Last1SiN/NoDuplicateCosmetics/releases/latest).
+3. With Borderlands 3 closed, copy the `.sdkmod` file intact to `Borderlands 3\sdk_mods\`. Do not extract the `.sdkmod` itself.
+4. Remove old NoDuplicateCosmetics test/probe builds so only one NoDuplicateCosmetics runtime mod can load.
+5. Start the game, open **MODS -> NoDuplicateCosmetics** and enable the mod.
 
-- generic coverage of every mission/dedicated/container/DLC-specific cosmetic source;
-- unsupported DataTable-backed or `AttributeInitializer`-backed weight shapes;
-- multiplayer authority/client validation;
-- full compatibility arbitration for mods which rewrite the same loot graph after NoDuplicateCosmetics has already filtered it.
+To update NoDuplicateCosmetics, replace the existing `.sdkmod` with the newer file and restart the game.
 
-The research evidence and bounded probe results are kept under `research/`.
+## Compatibility and license
+
+- The mod does not replace filtered cosmetics with unrelated loot.
+- Pool structure, source-local reachability, probabilities and selection counts remain unchanged.
+- Co-op support: **Unknown** — co-op behavior has not yet been validated.
+- License: **GNU GPLv3 with [Section 7 additional provenance terms](ADDITIONAL_TERMS.md)**
+
+## Credits
+
+**Development:** Sol / GPT-5.6 Sol  
+**Design, testing & QA:** Last1SiN
+
+**BL3 PythonSDK / Oak Mod Manager:** created by [apple1417](https://github.com/apple1417), with contributions from the [BL-SDK](https://github.com/bl-sdk) project and contributors.

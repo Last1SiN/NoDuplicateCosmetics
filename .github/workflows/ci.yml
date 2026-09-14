@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'release/**'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate source, metadata and sdkmod layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import tomllib
+          import zipfile
+
+          root = Path('NoDuplicateCosmetics')
+          source = root / '__init__.py'
+          metadata = root / 'pyproject.toml'
+
+          # Syntax check without writing __pycache__.
+          text = source.read_text(encoding='utf-8')
+          compile(text, str(source), 'exec')
+
+          data = tomllib.loads(metadata.read_text(encoding='utf-8'))
+          project = data['project']
+          sdkmod = data['tool']['sdkmod']
+          assert project['name'] == 'NoDuplicateCosmetics'
+          assert sdkmod['name'] == 'NoDuplicateCosmetics'
+          assert project['version'] == sdkmod['version']
+          assert sdkmod['coop_support'] == 'Unknown'
+          assert sdkmod['supported_games'] == ['BL3']
+          assert sdkmod['download'] == 'https://github.com/Last1SiN/NoDuplicateCosmetics/releases/latest/download/NoDuplicateCosmetics.sdkmod'
+          terms_url = 'https://github.com/Last1SiN/TrueFastball/blob/main/ADDITIONAL_TERMS.md'
+          assert project['urls']['AdditionalTerms'] == terms_url
+          assert sdkmod['license']['name'] == 'GPL3 + Section 7 terms'
+          assert sdkmod['license']['url'] == terms_url
+
+          source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+          if project['version'] == '0.2.3':
+              assert source_sha256 == '576ed747bd11cbdf9171dfb666b08dc45519185d76afbff0f5090c7a959cd137', source_sha256
+
+          forbidden = [p for p in Path('.').rglob('*') if '__pycache__' in p.parts or p.suffix in {'.pyc', '.pyo'}]
+          assert not forbidden, f'generated Python bytecode committed: {forbidden}'
+
+          required = {
+              'NoDuplicateCosmetics/__init__.py',
+              'NoDuplicateCosmetics/pyproject.toml',
+              'NoDuplicateCosmetics/README_EN.md',
+              'NoDuplicateCosmetics/README_RU.md',
+              'NoDuplicateCosmetics/LICENSE',
+              'NoDuplicateCosmetics/ADDITIONAL_TERMS.md',
+          }
+          assert all(Path(p).is_file() for p in required)
+          assert Path('README.md').is_file()
+          assert Path('README_RU.md').is_file()
+          assert Path('LICENSE').is_file()
+          assert Path('ADDITIONAL_TERMS.md').is_file()
+
+          dist = Path('dist')
+          dist.mkdir(exist_ok=True)
+          archive = dist / 'NoDuplicateCosmetics.sdkmod'
+          with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+              for path in sorted(root.rglob('*')):
+                  if path.is_file() and '__pycache__' not in path.parts and path.suffix not in {'.pyc', '.pyo'}:
+                      zf.write(path, path.as_posix())
+
+          with zipfile.ZipFile(archive) as zf:
+              names = [n for n in zf.namelist() if n and not n.endswith('/')]
+              roots = {n.split('/', 1)[0] for n in names}
+              assert roots == {archive.stem}, (roots, archive.stem)
+              assert required.issubset(set(names))
+
+          print('version:', project['version'])
+          print('source_sha256:', source_sha256)
+          print('sdkmod_layout: PASS')
+          PY

@@ -1,58 +1,45 @@
-# NoDuplicateCosmetics 0.2.0 Candidate
+# NoDuplicateCosmetics
 
-Generic loaded-pool production candidate for Borderlands 3.
+[English](README_EN.md) | [Русский](README_RU.md)
 
-## Current scope
+NoDuplicateCosmetics is a Borderlands 3 PythonSDK mod which prevents already-owned cosmetics from being selected again while preserving the game's native, source-local loot behavior.
 
-0.2.0 generalizes the already validated stock-world filter. Instead of being rooted
-only at `ItemPool_SkinsAndMisc`, it periodically discovers currently loaded
-`ItemPoolData` assets and filters supported owned cosmetic leaves in their existing
-graphs.
+Instead of replacing a rejected cosmetic with unrelated loot, the mod makes owned cosmetic entries ineligible **before native loot selection** and leaves the original pool structure, reachability, probabilities and selection counts intact.
 
-This is still a validation candidate, not yet a public all-source release claim.
+## Features
 
-## Behavior
+- Filters already-owned cosmetics before loot selection on drop.
+- Preserves each source's native, source-local loot graph and reachability.
+- Mixed gear + cosmetic pools continue through the game's native resolver.
+- An exhausted dedicated cosmetic branch produces no cosmetic from that branch.
 
-- Already-owned supported cosmetic leaves become ineligible before native selection.
-- Direct non-cosmetic entries are never changed.
-- No entries are added and no pool is redirected to another pool.
-- Child-pool exhaustion propagates upward only when the child is cosmetic-only,
-  has no remaining result, and was exhausted at least partly by this mod.
-- Unknown/unloaded child graphs remain reachable.
-- Unmapped cosmetics and unsupported weight shapes fail open locally: their vanilla
-  eligibility remains untouched instead of rejecting unrelated pools.
-- Newly loaded maps/DLC pools are discovered periodically.
-- Ownership is re-queried every second so newly learned mapped cosmetics can become
-  ineligible without a game restart.
+## Requirements
 
-## Weight transforms
+- Borderlands 3
+- [BL3 PythonSDK / Oak Mod Manager](https://github.com/bl-sdk/oak-mod-manager/releases/latest)
 
-Only the two runtime-proven `FAttributeInitializationData` forms are mutated:
+Use the [official BL3 SDK / Oak installation guide](https://bl-sdk.github.io/oak-mod-db/) for SDK installation and updates.
 
-- simple constant: `BaseValueConstant -> 0`;
-- attribute-backed with no DataTable/AttributeInitializer:
-  `BaseValueConstant -> 0` and `BaseValueScale -> 0`.
+## Installing the mod
 
-`BaseValueAttribute` and all other fields are preserved.
+1. Install or update BL3 PythonSDK / Oak using the official guide above.
+2. Download `NoDuplicateCosmetics.sdkmod` from [GitHub Releases](https://github.com/Last1SiN/NoDuplicateCosmetics/releases/latest).
+3. With Borderlands 3 closed, copy the `.sdkmod` file intact to `Borderlands 3\sdk_mods\`. Do not extract the `.sdkmod` itself.
+4. Remove old NoDuplicateCosmetics test/probe builds so only one NoDuplicateCosmetics runtime mod can load.
+5. Start the game, open **MODS -> NoDuplicateCosmetics** and enable the mod.
 
-## Safety / compatibility
+To update NoDuplicateCosmetics, replace the existing `.sdkmod` with the newer file and restart the game.
 
-The mod never writes pool `Quantity`, source `PoolProbability`, source selection count,
-loot-attachment probability, mission state, pickup state, or profile ownership.
+## Compatibility and license
 
-Every managed weight stores its exact captured original and filtered signatures.
-Restore happens only while the live value still matches this mod's filtered state.
-A later third-party change is left untouched and that entry becomes blocked from further
-management for the session.
+- The mod does not replace filtered cosmetics with unrelated loot.
+- Pool structure, source-local reachability, probabilities and selection counts remain unchanged.
+- Co-op support: **Unknown** — co-op behavior has not yet been validated.
+- License: **GNU GPLv3 with [Section 7 additional provenance terms](ADDITIONAL_TERMS.md)**
 
-## Test status
+## Credits
 
-Stock-world selection semantics already passed independently. 0.2.0 now requires
-representative runtime validation of:
+**Development:** Sol / GPT-5.6 Sol  
+**Design, testing & QA:** Last1SiN
 
-- a dedicated mission cosmetic pool;
-- a nested slot-machine cosmetic pool;
-- a mixed chest pool;
-- the stock-world pool as a regression control.
-
-Co-op support remains Unknown.
+**BL3 PythonSDK / Oak Mod Manager:** created by [apple1417](https://github.com/apple1417), with contributions from the [BL-SDK](https://github.com/bl-sdk) project and contributors.

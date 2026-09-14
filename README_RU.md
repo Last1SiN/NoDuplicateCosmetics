@@ -1,6 +1,6 @@
 # NoDuplicateCosmetics
 
-[English](README_EN.md) | [Русский](README_RU.md)
+[English](README.md) | [Русский](README_RU.md)
 
 NoDuplicateCosmetics — мод для Borderlands 3 PythonSDK, который не даёт уже открытым косметическим предметам снова участвовать в выборе лута, сохраняя штатную source-local механику выпадений игры.
 

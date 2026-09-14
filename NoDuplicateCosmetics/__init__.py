@@ -12,26 +12,46 @@ from unrealsdk.unreal import BoundFunction, UObject, WrappedStruct
 
 assert Game.get_current() is Game.BL3, "NoDuplicateCosmetics supports Borderlands 3 only"
 
-logging.info("[NoDuplicateCosmetics] LOADED candidate=0.2.0")
 
 HUD_FRAME = "/Script/Engine.HUD:ReceiveDrawHUD"
+UNLOCK_CUSTOMIZATION = "/Script/OakGame.OakPlayerController:ClientUnlockCustomization"
+UNLOCK_INVENTORY_CUSTOMIZATION = (
+    "/Script/OakGame.OakPlayerController:ClientUnlockInventoryCustomizationPart"
+)
+UNLOCK_ROOM_DECORATION = (
+    "/Script/OakGame.OakPlayerController:ClientUnlockCrewQuartersDecoration"
+)
+
+BALANCE_SET_GAME_STAGE = (
+    "/Script/GbxGameSystemCore.BalanceStateComponent:SetGameStage"
+)
+LOOTABLE_INITIALIZE = (
+    "/Script/GbxInventory.LootableComponent:InitializeLootConfigurations"
+)
+MISSION_COMPLETE = "/Script/GbxMission.Mission:CompleteMission"
+SPAWN_LOOT = "/Script/OakGame.OakBlueprintLibrary:SpawnLoot"
+SPAWN_LOOT_ASYNC = "/Script/OakGame.OakBlueprintLibrary:SpawnLootAsync"
 
 PLAYER_SETTLE_SECONDS = 2.0
-REFRESH_INTERVAL_SECONDS = 1.0
-DISCOVERY_INTERVAL_SECONDS = 5.0
+UNLOCK_RECONCILE_DELAY_SECONDS = 0.15
+SOURCE_REDISCOVERY_DELAY_SECONDS = 0.05
 
 _graph_ready = False
 _pool_nodes: dict[str, dict[str, Any]] = {}
 _cosmetic_leaf_records: dict[tuple[str, int, str], dict[str, Any]] = {}
 _customization_by_balance: dict[str, tuple[str, UObject]] = {}
 
+# Entries currently owned by this mod. Each managed record captures the exact live
+# pool/index plus before/after weight signatures. Restoration is guarded: a later
+# third-party value is never overwritten.
 _managed: dict[tuple[str, int, str, str], dict[str, Any]] = {}
 _blocked_keys: set[tuple[str, int, str, str]] = set()
 
-_pc_identity: tuple[str, int | None] | None = None
+_pc_identity: tuple[Any, ...] | None = None
 _ready_since: float | None = None
-_last_refresh = 0.0
-_last_discovery = 0.0
+_refresh_pending = False
+_refresh_due = 0.0
+_refresh_needs_discovery = False
 
 _reported_errors: set[str] = set()
 _startup_reported = False
@@ -176,6 +196,9 @@ def _entry_enabled(record: dict[str, Any]) -> bool:
     try:
         return _weight_mode(_original_for(record)) != "disabled"
     except Exception as exc:
+        # Unknown/unreadable entries remain reachable. This is deliberately fail-open
+        # locally so the generalized candidate never suppresses a foreign branch merely
+        # because it could not inspect its weight.
         _report_once(
             f"weight-read:{_entry_key(record)}",
             f"could not inspect weight at {_entry_key(record)}; leaving it reachable: "
@@ -215,6 +238,15 @@ def _rebuild_customization_map() -> bool:
 
 
 def _entry_balance_info(entry: Any) -> tuple[str, str]:
+    """
+    Returns (balance_path, classification).
+
+    classification:
+      cosmetic          — loaded customization balance with a proven ownership mapping
+      cosmetic_unmapped — loaded customization balance but no supported mapping object
+      noncosmetic       — loaded inventory balance not derived from customization
+      unknown           — unresolved/unloaded balance; must remain reachable
+    """
     selected_value: Any = None
     balance_path = "<unresolved>"
 
@@ -523,6 +555,8 @@ def _discover_loaded_graph() -> bool:
             "entries": records,
         }
 
+    # Pools which are no longer loaded must not stay pinned in a filtered state through
+    # our managed record. Restore what we own before dropping those graph nodes.
     for key, managed in list(_managed.items()):
         if key[0] not in new_nodes:
             _restore_record(key, managed)
@@ -545,13 +579,6 @@ def _discover_loaded_graph() -> bool:
         mapped_cosmetic,
         unmapped_cosmetic,
     )
-
-    if _last_topology_summary is not None and summary != _last_topology_summary:
-        logging.info(
-            "[NoDuplicateCosmetics] TOPOLOGY_REFRESH candidate=0.2.0 "
-            f"loaded_pools={summary[0]} cosmetic_leaves={summary[1]} "
-            f"mapped_cosmetic={summary[2]} unmapped_cosmetic={summary[3]}"
-        )
 
     _last_topology_summary = summary
     return _graph_ready
@@ -610,6 +637,8 @@ def _plan_desired_mutations() -> tuple[
         "cycles": 0,
     }
 
+    # availability tuple:
+    # (currently_can_produce_result, is_cosmetic_leaf, affected_by_our_filter)
     for leaf_id, record in _cosmetic_leaf_records.items():
         balance_path = record["balance_path"]
 
@@ -668,6 +697,7 @@ def _plan_desired_mutations() -> tuple[
     visiting: set[str] = set()
 
     def pool_state(pool_path: str) -> tuple[bool, bool, bool]:
+        # (available_any, cosmetic_only, affected_by_our_filter)
         if pool_path in memo:
             return memo[pool_path]
 
@@ -699,6 +729,8 @@ def _plan_desired_mutations() -> tuple[
                 child_path = record["child_path"]
 
                 if record["child"] is None or child_path not in _pool_nodes:
+                    # The referenced child is not currently loaded. Keep the branch
+                    # reachable and do not claim the parent is cosmetic-only.
                     if edge_enabled:
                         any_available = True
                     cosmetic_only = False
@@ -715,6 +747,8 @@ def _plan_desired_mutations() -> tuple[
                         any_available = True
                     continue
 
+                # Only propagate exhaustion through a child which is entirely cosmetic
+                # and became exhausted at least partly because of this mod's filtering.
                 if child_cosmetic_only and child_affected:
                     key = _entry_key(record)
 
@@ -763,6 +797,8 @@ def _plan_desired_mutations() -> tuple[
                 affected = affected or leaf_affected
                 continue
 
+            # Direct non-cosmetic or unresolved leaves are never mutated. They keep a
+            # mixed/unknown graph from being classified cosmetic-only.
             cosmetic_only = False
             if _entry_enabled(record):
                 any_available = True
@@ -786,6 +822,7 @@ def _reconcile() -> dict[str, int] | None:
     desired, stats = _plan_desired_mutations()
     desired_keys = set(desired)
 
+    # Restore entries which are no longer owned/exhausted.
     for key, record in list(_managed.items()):
         if key not in desired_keys:
             _restore_record(key, record)
@@ -806,15 +843,198 @@ def _reconcile() -> dict[str, int] | None:
     return stats
 
 
-def _refresh(now: float) -> None:
-    global _last_discovery, _startup_reported
 
-    if (
-        not _graph_ready
-        or _last_discovery == 0.0
-        or now - _last_discovery >= DISCOVERY_INTERVAL_SECONDS
+def _known_pool_path(path: str) -> bool:
+    return path.startswith("/Game/") and path in _pool_nodes
+
+
+def _value_is_unknown_loaded_pool(value: Any) -> bool:
+    if value is None:
+        return False
+
+    path = _candidate_path(value)
+    if not path.startswith("/Game/"):
+        return False
+
+    if _known_pool_path(path):
+        return False
+
+    if _is_a(value, "ItemPoolData"):
+        return True
+
+    loaded = _find_loaded_object("ItemPoolData", path)
+    return loaded is not None and not _known_pool_path(path)
+
+
+def _item_pool_list_has_unknown_loaded_pool(
+    value: Any,
+    seen: set[str] | None = None,
+) -> bool:
+    if value is None:
+        return False
+
+    if seen is None:
+        seen = set()
+
+    path = _candidate_path(value)
+    if path in seen:
+        return False
+    seen.add(path)
+
+    if _value_is_unknown_loaded_pool(value):
+        return True
+
+    # ItemPoolListData exposes ItemPools plus ItemPoolIncludedLists. Some runtime
+    # wrappers/builds have historically surfaced alternate field names, so keep
+    # the reads defensive without forcing package loads.
+    for field in ("ItemPools",):
+        try:
+            infos = list(getattr(value, field))
+        except Exception:
+            infos = []
+
+        for info in infos:
+            try:
+                pool_value = info.ItemPool
+            except Exception:
+                continue
+
+            if _value_is_unknown_loaded_pool(pool_value):
+                return True
+
+    for field in (
+        "ItemPoolIncludedLists",
+        "IncludedItemPoolLists",
+        "ItemPoolLists",
     ):
-        _last_discovery = now
+        try:
+            nested_lists = list(getattr(value, field))
+        except Exception:
+            nested_lists = []
+
+        for nested in nested_lists:
+            if _item_pool_list_has_unknown_loaded_pool(nested, seen):
+                return True
+
+    return False
+
+
+def _collection_has_unknown_loaded_pool(collection: Any) -> bool:
+    if collection is None:
+        return False
+
+    try:
+        infos = list(collection.ItemPools)
+    except Exception:
+        infos = []
+
+    for info in infos:
+        try:
+            pool_value = info.ItemPool
+        except Exception:
+            continue
+
+        if _value_is_unknown_loaded_pool(pool_value):
+            return True
+
+    try:
+        lists = list(collection.ItemPoolLists)
+    except Exception:
+        lists = []
+
+    for list_value in lists:
+        if _item_pool_list_has_unknown_loaded_pool(list_value):
+            return True
+
+    return False
+
+
+def _ai_source_has_unknown_loaded_pool(obj: UObject) -> bool:
+    if not _is_a(obj, "AIBalanceStateComponent"):
+        return False
+
+    for field in (
+        "DropOnDeathItemPools",
+        "CharacterExpansionDropOnDeathItemPools",
+    ):
+        try:
+            collection = getattr(obj, field)
+        except Exception:
+            continue
+
+        if _collection_has_unknown_loaded_pool(collection):
+            return True
+
+    return False
+
+
+def _lootable_has_unknown_loaded_pool(obj: UObject) -> bool:
+    try:
+        configurations = list(obj.LootConfigurations)
+    except Exception:
+        configurations = []
+
+    for configuration in configurations:
+        try:
+            attachments = list(configuration.ItemAttachments)
+        except Exception:
+            attachments = []
+
+        for attachment in attachments:
+            try:
+                pool_value = attachment.ItemPool
+            except Exception:
+                continue
+
+            if _value_is_unknown_loaded_pool(pool_value):
+                return True
+
+    return False
+
+
+def _mission_has_unknown_loaded_reward_pool(obj: UObject) -> bool:
+    try:
+        reward_data = obj.RewardData
+    except Exception:
+        return False
+
+    if reward_data is None:
+        return False
+
+    try:
+        reward_pool = reward_data.ItemPoolReward
+    except Exception:
+        return False
+
+    return _value_is_unknown_loaded_pool(reward_pool)
+
+
+def _schedule_source_rediscovery_if_needed(needed: bool) -> None:
+    if needed:
+        _schedule_refresh(SOURCE_REDISCOVERY_DELAY_SECONDS, discover=True)
+
+
+def _refresh_unknown_source_now_if_needed(item_pools: Any) -> None:
+    # Last-chance synchronous guard for native SpawnLoot: if the actual source
+    # root is loaded but not yet present in our graph, rebuild+reconcile before
+    # native stock selection proceeds.
+    if not _item_pool_list_has_unknown_loaded_pool(item_pools):
+        return
+
+    try:
+        _refresh_once(discover=True)
+    except Exception as exc:
+        _report_once(
+            f"source-refresh:{type(exc).__name__}:{exc}",
+            f"source-triggered refresh failed closed: {type(exc).__name__}: {exc}",
+        )
+        _restore_all()
+
+
+def _refresh_once(discover: bool) -> None:
+    global _startup_reported
+
+    if discover or not _graph_ready:
         if not _discover_loaded_graph():
             _restore_all()
             return
@@ -824,43 +1044,174 @@ def _refresh(now: float) -> None:
         return
 
     if not _startup_reported:
-        mapped_cosmetic = sum(
-            1 for record in _cosmetic_leaf_records.values()
-            if record["balance_kind"] == "cosmetic"
-        )
-        unmapped_cosmetic = len(_cosmetic_leaf_records) - mapped_cosmetic
-
-        logging.info(
-            "[NoDuplicateCosmetics] READY candidate=0.2.0 "
-            f"loaded_pools={len(_pool_nodes)} "
-            f"cosmetic_leaves={len(_cosmetic_leaf_records)} "
-            f"mapped_cosmetic={mapped_cosmetic} "
-            f"unmapped_cosmetic={unmapped_cosmetic} "
-            f"owned={stats['owned']} "
-            f"filtered_leaves={stats['filtered_leaves']} "
-            f"exhausted_edges={stats['exhausted_edges']} "
-            f"unsupported_owned={stats['unsupported_owned']} "
-            f"ownership_unresolved={stats['ownership_unresolved']} "
-            f"blocked={stats['blocked']} "
-            f"cycles={stats['cycles']}"
-        )
         _startup_reported = True
 
 
-def _player_identity() -> tuple[str, int | None] | None:
+def _schedule_refresh(delay_seconds: float, discover: bool) -> None:
+    global _refresh_pending, _refresh_due, _refresh_needs_discovery
+
+    due = time.monotonic() + max(0.0, float(delay_seconds))
+
+    if not _refresh_pending:
+        _refresh_pending = True
+        _refresh_due = due
+    else:
+        _refresh_due = min(_refresh_due, due)
+
+    _refresh_needs_discovery = _refresh_needs_discovery or discover
+
+
+
+def _player_identity(hud: UObject) -> tuple[Any, ...] | None:
     try:
         pc = get_pc()
         if pc is None or pc.Pawn is None:
             return None
+
         try:
             if pc.Pawn.IsActorBeingDestroyed():
                 return None
         except Exception:
             pass
 
-        return _path(pc), getattr(pc, "InternalIndex", None)
+        return (
+            _path(pc),
+            getattr(pc, "InternalIndex", None),
+            _path(pc.Pawn),
+            getattr(pc.Pawn, "InternalIndex", None),
+            _path(hud),
+            getattr(hud, "InternalIndex", None),
+        )
     except Exception:
         return None
+
+
+
+@hook(BALANCE_SET_GAME_STAGE, Type.POST)
+def _balance_set_game_stage_hook(
+    obj: UObject,
+    _args: WrappedStruct,
+    _ret: Any,
+    _func: BoundFunction,
+) -> None:
+    # Cheap source-aware check only. Full discovery happens only when a newly
+    # loaded AI death-loot root is actually observed.
+    _schedule_source_rediscovery_if_needed(
+        _ai_source_has_unknown_loaded_pool(obj)
+    )
+
+
+@hook(LOOTABLE_INITIALIZE, Type.POST)
+def _lootable_initialize_hook(
+    obj: UObject,
+    _args: WrappedStruct,
+    _ret: Any,
+    _func: BoundFunction,
+) -> None:
+    # LootableComponent materializes its loot configurations before use. Trigger
+    # rediscovery only if those configurations reference an unknown loaded pool.
+    _schedule_source_rediscovery_if_needed(
+        _lootable_has_unknown_loaded_pool(obj)
+    )
+
+
+@hook(MISSION_COMPLETE, Type.PRE)
+def _mission_complete_hook(
+    obj: UObject,
+    _args: WrappedStruct,
+    _ret: Any,
+    _func: BoundFunction,
+) -> None:
+    # Mission rewards are infrequent. If the reward pool is already loaded and
+    # new to this runtime graph, rebuild synchronously before mission completion
+    # can resolve the reward.
+    if not _mission_has_unknown_loaded_reward_pool(obj):
+        return
+
+    try:
+        _refresh_once(discover=True)
+    except Exception as exc:
+        _report_once(
+            f"mission-refresh:{type(exc).__name__}:{exc}",
+            f"mission source refresh failed closed: {type(exc).__name__}: {exc}",
+        )
+        _restore_all()
+
+
+@hook(SPAWN_LOOT_ASYNC, Type.PRE)
+def _spawn_loot_async_hook(
+    _obj: UObject,
+    args: WrappedStruct,
+    _ret: Any,
+    _func: BoundFunction,
+) -> None:
+    # Generic final boundary for native asynchronous loot spawning. The request
+    # already contains the exact ItemPools object which stock selection will use,
+    # so a genuinely late-loaded source can be discovered and filtered before the
+    # native async resolver is entered. This hook never invokes SpawnLootAsync.
+    try:
+        request = args.Request
+        item_pools = request.ItemPools
+    except Exception:
+        return
+
+    _refresh_unknown_source_now_if_needed(item_pools)
+
+
+@hook(SPAWN_LOOT, Type.PRE)
+def _spawn_loot_hook(
+    _obj: UObject,
+    args: WrappedStruct,
+    _ret: Any,
+    _func: BoundFunction,
+) -> None:
+    # Generic final boundary for native synchronous loot spawning. This hook does
+    # not spawn anything itself. Known sources cost only a few pointer/path reads;
+    # an expensive graph rebuild occurs only for a genuinely new loaded pool.
+    try:
+        item_pools = args.ItemPools
+    except Exception:
+        return
+
+    _refresh_unknown_source_now_if_needed(item_pools)
+
+
+def _on_native_cosmetic_unlock() -> None:
+    # Native unlock RPCs are the same-session ownership-change boundary for the
+    # three supported cosmetic families. Reconcile once after the profile update
+    # instead of polling every cosmetic and loaded pool once per second.
+    _schedule_refresh(UNLOCK_RECONCILE_DELAY_SECONDS, discover=False)
+
+
+@hook(UNLOCK_CUSTOMIZATION, Type.POST)
+def _unlock_customization_hook(
+    _obj: UObject,
+    _args: WrappedStruct,
+    _ret: Any,
+    _func: BoundFunction,
+) -> None:
+    _on_native_cosmetic_unlock()
+
+
+@hook(UNLOCK_INVENTORY_CUSTOMIZATION, Type.POST)
+def _unlock_inventory_customization_hook(
+    _obj: UObject,
+    _args: WrappedStruct,
+    _ret: Any,
+    _func: BoundFunction,
+) -> None:
+    _on_native_cosmetic_unlock()
+
+
+@hook(UNLOCK_ROOM_DECORATION, Type.POST)
+def _unlock_room_decoration_hook(
+    _obj: UObject,
+    _args: WrappedStruct,
+    _ret: Any,
+    _func: BoundFunction,
+) -> None:
+    _on_native_cosmetic_unlock()
+
 
 
 @hook(HUD_FRAME, Type.POST)
@@ -870,23 +1221,24 @@ def _hud_frame(
     _ret: Any,
     _func: BoundFunction,
 ) -> None:
-    global _pc_identity, _ready_since, _last_refresh, _last_discovery
+    global _pc_identity, _ready_since
     global _graph_ready, _startup_reported, _last_topology_summary
+    global _refresh_pending, _refresh_due, _refresh_needs_discovery
 
     now = time.monotonic()
-    identity = _player_identity()
+    identity = _player_identity(_obj)
 
     if identity is None:
         _ready_since = None
         return
 
     if _pc_identity != identity:
+        # New Pawn/HUD runtime context: restore the old graph and rebuild once
+        # after the new world has settled. No periodic graph polling is used.
         _restore_all()
 
         _pc_identity = identity
         _ready_since = now
-        _last_refresh = 0.0
-        _last_discovery = 0.0
         _graph_ready = False
         _startup_reported = False
         _last_topology_summary = None
@@ -894,22 +1246,26 @@ def _hud_frame(
         _pool_nodes.clear()
         _cosmetic_leaf_records.clear()
         _customization_by_balance.clear()
+
+        _refresh_pending = True
+        _refresh_due = now + PLAYER_SETTLE_SECONDS
+        _refresh_needs_discovery = True
         return
 
     if _ready_since is None:
         _ready_since = now
         return
 
-    if now - _ready_since < PLAYER_SETTLE_SECONDS:
+    if not _refresh_pending or now < _refresh_due:
         return
 
-    if now - _last_refresh < REFRESH_INTERVAL_SECONDS:
-        return
-
-    _last_refresh = now
+    discover = _refresh_needs_discovery
+    _refresh_pending = False
+    _refresh_due = 0.0
+    _refresh_needs_discovery = False
 
     try:
-        _refresh(now)
+        _refresh_once(discover)
     except Exception as exc:
         _report_once(
             f"refresh-exception:{type(exc).__name__}:{exc}",
@@ -918,8 +1274,10 @@ def _hud_frame(
         _restore_all()
 
 
+
 def on_enable() -> None:
-    global _graph_ready, _pc_identity, _ready_since, _last_refresh, _last_discovery
+    global _graph_ready, _pc_identity, _ready_since
+    global _refresh_pending, _refresh_due, _refresh_needs_discovery
     global _startup_reported, _last_topology_summary
 
     _restore_all()
@@ -934,15 +1292,12 @@ def on_enable() -> None:
 
     _pc_identity = None
     _ready_since = None
-    _last_refresh = 0.0
-    _last_discovery = 0.0
+    _refresh_pending = False
+    _refresh_due = 0.0
+    _refresh_needs_discovery = False
     _startup_reported = False
     _last_topology_summary = None
 
-    logging.info(
-        "[NoDuplicateCosmetics] ENABLED candidate=0.2.0 "
-        "scope=loaded-item-pool-graphs waiting_for_player"
-    )
 
 
 def on_disable() -> None:
