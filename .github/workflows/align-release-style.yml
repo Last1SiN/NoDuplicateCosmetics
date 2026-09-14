@@ -1,0 +1,46 @@
+name: Align v0.2.3 release presentation
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/align-release-style.yml
+
+permissions:
+  contents: write
+
+jobs:
+  align:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update GitHub Release presentation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/release-notes.md <<'EOF'
+          - Filters already-owned supported cosmetics before native loot selection while preserving source-local loot behavior.
+          - Preserves mixed-pool native selection, dedicated cosmetic no-drop behavior, and exact nested child exhaustion boundaries.
+          - Refreshes ownership after cosmetics are unlocked during the same game session.
+          - Uses event-driven late-source discovery with `SpawnLootAsync` / `SpawnLoot` PRE last-chance recovery instead of periodic full graph polling.
+          - Guarded restore preserves later third-party weight mutations.
+          - Runtime validation passed for dedicated, nested, mixed and world-drop topology, late-loaded sources, same-session unlock refresh, disable/restore, conflict arbitration, and the final Graveward production smoke.
+          - Single-player / local-player scope validated. Co-op support: Unknown.
+          EOF
+          gh release edit v0.2.3 \
+            --title "NoDuplicateCosmetics v0.2.3" \
+            --notes-file /tmp/release-notes.md
+
+      - name: Remove one-off workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/align-release-style.yml
+          git commit -m "Remove one-off release style workflow"
+          git push origin HEAD:main
