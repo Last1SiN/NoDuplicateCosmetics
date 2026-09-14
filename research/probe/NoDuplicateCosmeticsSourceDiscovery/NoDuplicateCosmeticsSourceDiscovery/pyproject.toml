@@ -1,0 +1,16 @@
+[project]
+name = "NoDuplicateCosmeticsSourceDiscovery"
+version = "0.1.0"
+description = "Read-only BL3 cosmetic loot-source topology discovery tool for NoDuplicateCosmetics development."
+authors = [{ name = "Sol / GPT-5.6 Sol" }]
+maintainers = [{ name = "Last1SiN" }]
+
+[project.urls]
+Repository = "https://github.com/Last1SiN/NoDuplicateCosmetics"
+
+[tool.sdkmod]
+name = "NoDuplicateCosmeticsSourceDiscovery"
+version = "0.1.0"
+license = { name = "GPL3", url = "https://choosealicense.com/licenses/gpl-3.0/" }
+coop_support = "Unknown"
+supported_games = ["BL3"]

@@ -1,0 +1,16 @@
+[project]
+name = "NoDuplicateCosmetics"
+version = "0.2.3"
+description = "Filters already-owned cosmetics from loaded Borderlands 3 item-pool graphs while preserving source-local loot behavior."
+authors = [{ name = "Sol / GPT-5.6 Sol" }]
+maintainers = [{ name = "Last1SiN" }]
+
+[project.urls]
+Repository = "https://github.com/Last1SiN/NoDuplicateCosmetics"
+
+[tool.sdkmod]
+name = "NoDuplicateCosmetics"
+version = "0.2.3"
+license = { name = "GPL3", url = "https://choosealicense.com/licenses/gpl-3.0/" }
+coop_support = "Unknown"
+supported_games = ["BL3"]
