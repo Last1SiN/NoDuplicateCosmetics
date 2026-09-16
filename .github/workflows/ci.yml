@@ -48,8 +48,8 @@ jobs:
           assert sdkmod['license']['url'] == terms_url
 
           source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
-          if project['version'] == '0.2.3':
-              assert source_sha256 == '576ed747bd11cbdf9171dfb666b08dc45519185d76afbff0f5090c7a959cd137', source_sha256
+          if project['version'] == '1.0.0':
+              assert source_sha256 == '8edc8910722d9121c83d5fff9a1eeaef8c58a84829c2a3bae1b26faee62f6395', source_sha256
 
           forbidden = [p for p in Path('.').rglob('*') if '__pycache__' in p.parts or p.suffix in {'.pyc', '.pyo'}]
           assert not forbidden, f'generated Python bytecode committed: {forbidden}'

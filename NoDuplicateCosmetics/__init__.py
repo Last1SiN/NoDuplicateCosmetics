@@ -33,6 +33,7 @@ SPAWN_LOOT = "/Script/OakGame.OakBlueprintLibrary:SpawnLoot"
 SPAWN_LOOT_ASYNC = "/Script/OakGame.OakBlueprintLibrary:SpawnLootAsync"
 
 PLAYER_SETTLE_SECONDS = 2.0
+WORLD_TRANSITION_SETTLE_SECONDS = 5.0
 UNLOCK_RECONCILE_DELAY_SECONDS = 0.15
 SOURCE_REDISCOVERY_DELAY_SECONDS = 0.05
 
@@ -182,7 +183,20 @@ def _entry_key(record: dict[str, Any]) -> tuple[str, int, str, str]:
 
 
 def _current_signature(record: dict[str, Any]) -> tuple[Any, ...]:
-    return _weight_signature(record["pool"].BalancedItems[record["index"]].Weight)
+    pool = record.get("pool")
+    if pool is None:
+        raise RuntimeError("managed pool reference is detached")
+    return _weight_signature(pool.BalancedItems[record["index"]].Weight)
+
+
+def _detach_managed_live_refs() -> None:
+    # A Python UObject wrapper may outlive the underlying UE object during travel.
+    # Never carry those wrappers across a Pawn/HUD context change: native access to
+    # a stale wrapper can AV before Python can raise/catch an exception.
+    for record in _managed.values():
+        record["pool"] = None
+        if "child" in record:
+            record["child"] = None
 
 
 def _original_for(record: dict[str, Any]) -> tuple[Any, ...]:
@@ -306,6 +320,10 @@ def _entry_child_info(entry: Any, loaded_pools: dict[str, UObject]) -> tuple[str
 
 
 def _restore_record(key: tuple[str, int, str, str], record: dict[str, Any]) -> bool:
+    if record.get("pool") is None:
+        _managed.pop(key, None)
+        return True
+
     try:
         current = _current_signature(record)
     except Exception as exc:
@@ -555,11 +573,18 @@ def _discover_loaded_graph() -> bool:
             "entries": records,
         }
 
-    # Pools which are no longer loaded must not stay pinned in a filtered state through
-    # our managed record. Restore what we own before dropping those graph nodes.
+    # Rebind managed records to current-world pool wrappers. A pool absent from
+    # new_nodes is no longer loaded, so there is no live object to restore. Drop
+    # its bookkeeping without touching the detached old-world UObject wrapper.
     for key, managed in list(_managed.items()):
-        if key[0] not in new_nodes:
-            _restore_record(key, managed)
+        node = new_nodes.get(key[0])
+        if node is None:
+            _managed.pop(key, None)
+            continue
+        managed["pool"] = node["pool"]
+        managed["index"] = key[1]
+        if "child" in managed:
+            managed["child"] = None
 
     _pool_nodes.clear()
     _pool_nodes.update(new_nodes)
@@ -1233,9 +1258,14 @@ def _hud_frame(
         return
 
     if _pc_identity != identity:
-        # New Pawn/HUD runtime context: restore the old graph and rebuild once
-        # after the new world has settled. No periodic graph polling is used.
-        _restore_all()
+        # A new Pawn/HUD context can arrive while the old world is being torn down.
+        # Do not dereference or restore through old-world UObject wrappers here:
+        # pyunrealsdk cannot turn every stale native pointer access into a Python
+        # exception. Preserve only plain managed metadata and rebind it after the
+        # new world has settled.
+        had_identity = _pc_identity is not None
+        if had_identity:
+            _detach_managed_live_refs()
 
         _pc_identity = identity
         _ready_since = now
@@ -1248,7 +1278,12 @@ def _hud_frame(
         _customization_by_balance.clear()
 
         _refresh_pending = True
-        _refresh_due = now + PLAYER_SETTLE_SECONDS
+        settle = (
+            WORLD_TRANSITION_SETTLE_SECONDS
+            if had_identity
+            else PLAYER_SETTLE_SECONDS
+        )
+        _refresh_due = now + settle
         _refresh_needs_discovery = True
         return
 
