@@ -1,4 +1,0 @@
-baseline: requests=96 observed=96 target_hits=12 distinct=6
-filtered: requests=96 observed=96 target_hits=0 distinct=5
-restored: requests=96 observed=96 target_hits=12 distinct=6
-restore: PASS exact weight signature restored
