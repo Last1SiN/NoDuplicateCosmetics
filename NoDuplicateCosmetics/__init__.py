@@ -36,6 +36,7 @@ PLAYER_SETTLE_SECONDS = 2.0
 WORLD_TRANSITION_SETTLE_SECONDS = 5.0
 UNLOCK_RECONCILE_DELAY_SECONDS = 0.15
 SOURCE_REDISCOVERY_DELAY_SECONDS = 0.05
+SOURCE_REFRESH_BUDGET_MS = 20.0
 
 _graph_ready = False
 _pool_nodes: dict[str, dict[str, Any]] = {}
@@ -53,6 +54,8 @@ _ready_since: float | None = None
 _refresh_pending = False
 _refresh_due = 0.0
 _refresh_needs_discovery = False
+_refresh_needs_reconcile = False
+_pending_source_pool_paths: set[str] = set()
 
 _reported_errors: set[str] = set()
 
@@ -593,6 +596,267 @@ def _discover_loaded_graph() -> bool:
     return _graph_ready
 
 
+def _targeted_entry_child_info(entry: Any) -> tuple[str, UObject | None]:
+    try:
+        value = entry.ItemPoolData
+    except Exception:
+        return "<None>", None
+
+    if value is None:
+        return "<None>", None
+
+    path = _candidate_path(value)
+    if not path.startswith("/Game/"):
+        return path, None
+
+    if _is_a(value, "ItemPoolData"):
+        return path, value
+
+    return path, _find_loaded_object("ItemPoolData", path)
+
+
+def _add_loaded_pool_node(pool_path: str, pool: UObject) -> set[str]:
+    try:
+        count = len(pool.BalancedItems)
+    except Exception as exc:
+        _report_once(
+            f"target-pool-read:{pool_path}",
+            f"could not read late-loaded BalancedItems for {pool_path}; "
+            f"leaving pool unmanaged: {type(exc).__name__}: {exc}",
+        )
+        return set()
+
+    records: list[dict[str, Any]] = []
+    child_paths: set[str] = set()
+
+    for idx in range(count):
+        try:
+            live = pool.BalancedItems[idx]
+        except Exception:
+            continue
+
+        child_path, child = _targeted_entry_child_info(live)
+        if child_path.startswith("/Game/"):
+            records.append(
+                {
+                    "kind": "child",
+                    "pool": pool,
+                    "pool_path": pool_path,
+                    "index": idx,
+                    "child": child,
+                    "child_path": child_path,
+                    "balance_path": None,
+                    "balance_kind": None,
+                }
+            )
+            if child is not None:
+                child_paths.add(child_path)
+            continue
+
+        balance_path, balance_kind = _entry_balance_info(live)
+        record = {
+            "kind": "leaf",
+            "pool": pool,
+            "pool_path": pool_path,
+            "index": idx,
+            "child": None,
+            "child_path": None,
+            "balance_path": balance_path,
+            "balance_kind": balance_kind,
+        }
+        records.append(record)
+
+        if balance_kind in ("cosmetic", "cosmetic_unmapped"):
+            _cosmetic_leaf_records[(pool_path, idx, balance_path)] = record
+
+    _pool_nodes[pool_path] = {
+        "pool": pool,
+        "entries": records,
+    }
+    return child_paths
+
+
+def _affected_pool_ancestors(changed_paths: set[str]) -> set[str]:
+    affected = set(changed_paths)
+    if not affected:
+        return affected
+
+    changed = True
+    while changed:
+        changed = False
+        for parent_path, node in _pool_nodes.items():
+            if parent_path in affected:
+                continue
+
+            for record in node["entries"]:
+                if record["kind"] != "child":
+                    continue
+                if record["child_path"] not in affected:
+                    continue
+
+                affected.add(parent_path)
+                changed = True
+                break
+
+    return affected
+
+
+def _discover_source_closure(seed_paths: set[str]) -> set[str]:
+    queue = list(seed_paths)
+    queued = set(queue)
+    changed_paths: set[str] = set()
+
+    while queue:
+        pool_path = queue.pop()
+        if not pool_path.startswith("/Game/"):
+            continue
+
+        node = _pool_nodes.get(pool_path)
+        if node is not None:
+            # A known parent may have referenced an unloaded child during the
+            # initial graph build. Resolve only those exact children now.
+            for record in node["entries"]:
+                if record["kind"] != "child" or record["child"] is not None:
+                    continue
+
+                child_path = record["child_path"]
+                child = _find_loaded_object("ItemPoolData", child_path)
+                if child is None:
+                    continue
+
+                record["child"] = child
+                changed_paths.add(child_path)
+                if child_path not in queued:
+                    queued.add(child_path)
+                    queue.append(child_path)
+            continue
+
+        pool = _find_loaded_object("ItemPoolData", pool_path)
+        if pool is None:
+            continue
+
+        child_paths = _add_loaded_pool_node(pool_path, pool)
+        changed_paths.add(pool_path)
+
+        for child_path in child_paths:
+            if child_path not in queued:
+                queued.add(child_path)
+                queue.append(child_path)
+
+    if not changed_paths:
+        return set()
+
+    # Rebind older graph records which pointed at pools that have just become
+    # available. This touches only plain bookkeeping and the exact new paths.
+    for node in _pool_nodes.values():
+        for record in node["entries"]:
+            if record["kind"] != "child":
+                continue
+
+            child_path = record["child_path"]
+            child_node = _pool_nodes.get(child_path)
+            if child_node is not None and record["child"] is None:
+                record["child"] = child_node["pool"]
+
+    # Late-loaded customization objects are uncommon, but a newly added source
+    # can expose one. Refresh the ownership map only when the targeted closure
+    # actually contains an unmapped cosmetic balance.
+    needs_mapping_refresh = any(
+        record["pool_path"] in changed_paths
+        and record["balance_kind"] == "cosmetic_unmapped"
+        for record in _cosmetic_leaf_records.values()
+    )
+    if needs_mapping_refresh and _rebuild_customization_map():
+        for record in _cosmetic_leaf_records.values():
+            if (
+                record["pool_path"] in changed_paths
+                and record["balance_kind"] == "cosmetic_unmapped"
+                and record["balance_path"] in _customization_by_balance
+            ):
+                record["balance_kind"] = "cosmetic"
+
+    return _affected_pool_ancestors(changed_paths)
+
+
+def _entry_currently_enabled(record: dict[str, Any]) -> bool:
+    try:
+        return _weight_mode(_current_signature(record)) != "disabled"
+    except Exception:
+        return True
+
+
+def _current_pool_state(
+    pool_path: str,
+    memo: dict[str, tuple[bool, bool, bool]],
+    visiting: set[str],
+) -> tuple[bool, bool, bool]:
+    cached = memo.get(pool_path)
+    if cached is not None:
+        return cached
+
+    if pool_path in visiting:
+        return True, False, False
+
+    node = _pool_nodes.get(pool_path)
+    if node is None:
+        return True, False, False
+
+    visiting.add(pool_path)
+
+    any_available = False
+    cosmetic_only = True
+    affected = False
+    saw_entry = False
+
+    for record in node["entries"]:
+        saw_entry = True
+        key = _entry_key(record)
+        managed_here = key in _managed
+
+        if record["kind"] == "child":
+            edge_enabled = _entry_currently_enabled(record)
+            child_path = record["child_path"]
+
+            if record["child"] is None or child_path not in _pool_nodes:
+                if edge_enabled:
+                    any_available = True
+                cosmetic_only = False
+                affected = affected or managed_here
+                continue
+
+            child_available, child_cosmetic_only, child_affected = _current_pool_state(
+                child_path,
+                memo,
+                visiting,
+            )
+            if not child_cosmetic_only:
+                cosmetic_only = False
+            if edge_enabled and child_available:
+                any_available = True
+            affected = affected or managed_here or child_affected
+            continue
+
+        if record["balance_kind"] in ("cosmetic", "cosmetic_unmapped"):
+            if _entry_currently_enabled(record):
+                any_available = True
+            affected = affected or managed_here
+            continue
+
+        cosmetic_only = False
+        if _entry_currently_enabled(record):
+            any_available = True
+        affected = affected or managed_here
+
+    visiting.remove(pool_path)
+
+    if not saw_entry:
+        cosmetic_only = False
+
+    result = (any_available, cosmetic_only, affected)
+    memo[pool_path] = result
+    return result
+
+
 def _owned(balance_path: str, ownership_cache: dict[str, bool | None]) -> bool | None:
     if balance_path in ownership_cache:
         return ownership_cache[balance_path]
@@ -628,7 +892,9 @@ def _owned(balance_path: str, ownership_cache: dict[str, bool | None]) -> bool |
     return value
 
 
-def _plan_desired_mutations() -> tuple[
+def _plan_desired_mutations(
+    scope: set[str] | None = None,
+) -> tuple[
     dict[tuple[str, int, str, str], tuple[dict[str, Any], str]],
     dict[str, int],
 ]:
@@ -649,6 +915,9 @@ def _plan_desired_mutations() -> tuple[
     # availability tuple:
     # (currently_can_produce_result, is_cosmetic_leaf, affected_by_our_filter)
     for leaf_id, record in _cosmetic_leaf_records.items():
+        if scope is not None and record["pool_path"] not in scope:
+            continue
+
         balance_path = record["balance_path"]
 
         if record["balance_kind"] == "cosmetic_unmapped":
@@ -704,9 +973,18 @@ def _plan_desired_mutations() -> tuple[
 
     memo: dict[str, tuple[bool, bool, bool]] = {}
     visiting: set[str] = set()
+    current_memo: dict[str, tuple[bool, bool, bool]] = {}
+    current_visiting: set[str] = set()
 
     def pool_state(pool_path: str) -> tuple[bool, bool, bool]:
         # (available_any, cosmetic_only, affected_by_our_filter)
+        if scope is not None and pool_path not in scope:
+            return _current_pool_state(
+                pool_path,
+                current_memo,
+                current_visiting,
+            )
+
         if pool_path in memo:
             return memo[pool_path]
 
@@ -821,18 +1099,23 @@ def _plan_desired_mutations() -> tuple[
         memo[pool_path] = result
         return result
 
-    for pool_path in list(_pool_nodes):
+    pool_paths = list(_pool_nodes) if scope is None else list(scope)
+    for pool_path in pool_paths:
         pool_state(pool_path)
 
     return desired, stats
 
 
-def _reconcile() -> dict[str, int] | None:
-    desired, stats = _plan_desired_mutations()
+def _reconcile(scope: set[str] | None = None) -> dict[str, int] | None:
+    desired, stats = _plan_desired_mutations(scope)
     desired_keys = set(desired)
 
-    # Restore entries which are no longer owned/exhausted.
+    # Restore entries which are no longer owned/exhausted. A targeted source
+    # refresh owns only the affected pool closure; unrelated managed entries
+    # remain untouched.
     for key, record in list(_managed.items()):
+        if scope is not None and key[0] not in scope:
+            continue
         if key not in desired_keys:
             _restore_record(key, record)
 
@@ -853,63 +1136,43 @@ def _reconcile() -> dict[str, int] | None:
 
 
 
-def _known_pool_path(path: str) -> bool:
-    return path.startswith("/Game/") and path in _pool_nodes
-
-
-def _value_is_unknown_loaded_pool(value: Any) -> bool:
+def _pool_path_from_value(value: Any) -> str | None:
     if value is None:
-        return False
+        return None
 
     path = _candidate_path(value)
-    if not path.startswith("/Game/"):
-        return False
-
-    if _known_pool_path(path):
-        return False
-
-    if _is_a(value, "ItemPoolData"):
-        return True
-
-    loaded = _find_loaded_object("ItemPoolData", path)
-    return loaded is not None and not _known_pool_path(path)
+    return path if path.startswith("/Game/") else None
 
 
-def _item_pool_list_has_unknown_loaded_pool(
+def _item_pool_list_paths(
     value: Any,
     seen: set[str] | None = None,
-) -> bool:
+) -> set[str]:
     if value is None:
-        return False
+        return set()
 
     if seen is None:
         seen = set()
 
-    path = _candidate_path(value)
-    if path in seen:
-        return False
-    seen.add(path)
+    list_path = _candidate_path(value)
+    if list_path in seen:
+        return set()
+    seen.add(list_path)
 
-    if _value_is_unknown_loaded_pool(value):
-        return True
+    paths: set[str] = set()
 
-    # ItemPoolListData exposes ItemPools plus ItemPoolIncludedLists. Some runtime
-    # wrappers/builds have historically surfaced alternate field names, so keep
-    # the reads defensive without forcing package loads.
-    for field in ("ItemPools",):
+    try:
+        infos = list(value.ItemPools)
+    except Exception:
+        infos = []
+
+    for info in infos:
         try:
-            infos = list(getattr(value, field))
+            pool_path = _pool_path_from_value(info.ItemPool)
         except Exception:
-            infos = []
-
-        for info in infos:
-            try:
-                pool_value = info.ItemPool
-            except Exception:
-                continue
-
-            if _value_is_unknown_loaded_pool(pool_value):
-                return True
+            pool_path = None
+        if pool_path is not None:
+            paths.add(pool_path)
 
     for field in (
         "ItemPoolIncludedLists",
@@ -922,15 +1185,16 @@ def _item_pool_list_has_unknown_loaded_pool(
             nested_lists = []
 
         for nested in nested_lists:
-            if _item_pool_list_has_unknown_loaded_pool(nested, seen):
-                return True
+            paths.update(_item_pool_list_paths(nested, seen))
 
-    return False
+    return paths
 
 
-def _collection_has_unknown_loaded_pool(collection: Any) -> bool:
+def _collection_pool_paths(collection: Any) -> set[str]:
     if collection is None:
-        return False
+        return set()
+
+    paths: set[str] = set()
 
     try:
         infos = list(collection.ItemPools)
@@ -939,12 +1203,11 @@ def _collection_has_unknown_loaded_pool(collection: Any) -> bool:
 
     for info in infos:
         try:
-            pool_value = info.ItemPool
+            pool_path = _pool_path_from_value(info.ItemPool)
         except Exception:
-            continue
-
-        if _value_is_unknown_loaded_pool(pool_value):
-            return True
+            pool_path = None
+        if pool_path is not None:
+            paths.add(pool_path)
 
     try:
         lists = list(collection.ItemPoolLists)
@@ -952,16 +1215,16 @@ def _collection_has_unknown_loaded_pool(collection: Any) -> bool:
         lists = []
 
     for list_value in lists:
-        if _item_pool_list_has_unknown_loaded_pool(list_value):
-            return True
+        paths.update(_item_pool_list_paths(list_value))
 
-    return False
+    return paths
 
 
-def _ai_source_has_unknown_loaded_pool(obj: UObject) -> bool:
+def _ai_source_pool_paths(obj: UObject) -> set[str]:
     if not _is_a(obj, "AIBalanceStateComponent"):
-        return False
+        return set()
 
+    paths: set[str] = set()
     for field in (
         "DropOnDeathItemPools",
         "CharacterExpansionDropOnDeathItemPools",
@@ -970,14 +1233,14 @@ def _ai_source_has_unknown_loaded_pool(obj: UObject) -> bool:
             collection = getattr(obj, field)
         except Exception:
             continue
+        paths.update(_collection_pool_paths(collection))
 
-        if _collection_has_unknown_loaded_pool(collection):
-            return True
-
-    return False
+    return paths
 
 
-def _lootable_has_unknown_loaded_pool(obj: UObject) -> bool:
+def _lootable_pool_paths(obj: UObject) -> set[str]:
+    paths: set[str] = set()
+
     try:
         configurations = list(obj.LootConfigurations)
     except Exception:
@@ -991,53 +1254,88 @@ def _lootable_has_unknown_loaded_pool(obj: UObject) -> bool:
 
         for attachment in attachments:
             try:
-                pool_value = attachment.ItemPool
+                pool_path = _pool_path_from_value(attachment.ItemPool)
             except Exception:
-                continue
+                pool_path = None
+            if pool_path is not None:
+                paths.add(pool_path)
 
-            if _value_is_unknown_loaded_pool(pool_value):
-                return True
+    return paths
+
+
+def _mission_reward_pool_paths(obj: UObject) -> set[str]:
+    try:
+        reward_data = obj.RewardData
+    except Exception:
+        return set()
+
+    if reward_data is None:
+        return set()
+
+    try:
+        pool_path = _pool_path_from_value(reward_data.ItemPoolReward)
+    except Exception:
+        pool_path = None
+
+    return {pool_path} if pool_path is not None else set()
+
+
+def _source_path_needs_refresh(pool_path: str) -> bool:
+    node = _pool_nodes.get(pool_path)
+    if node is None:
+        return _find_loaded_object("ItemPoolData", pool_path) is not None
+
+    for record in node["entries"]:
+        if record["kind"] != "child" or record["child"] is not None:
+            continue
+        if _find_loaded_object("ItemPoolData", record["child_path"]) is not None:
+            return True
 
     return False
 
 
-def _mission_has_unknown_loaded_reward_pool(obj: UObject) -> bool:
-    try:
-        reward_data = obj.RewardData
-    except Exception:
-        return False
+def _schedule_source_paths(paths: set[str]) -> None:
+    global _refresh_pending, _refresh_due
 
-    if reward_data is None:
-        return False
-
-    try:
-        reward_pool = reward_data.ItemPoolReward
-    except Exception:
-        return False
-
-    return _value_is_unknown_loaded_pool(reward_pool)
-
-
-def _schedule_source_rediscovery_if_needed(needed: bool) -> None:
-    if needed:
-        _schedule_refresh(SOURCE_REDISCOVERY_DELAY_SECONDS, discover=True)
-
-
-def _refresh_unknown_source_now_if_needed(item_pools: Any) -> None:
-    # Last-chance synchronous guard for native SpawnLoot: if the actual source
-    # root is loaded but not yet present in our graph, rebuild+reconcile before
-    # native stock selection proceeds.
-    if not _item_pool_list_has_unknown_loaded_pool(item_pools):
+    needed = {path for path in paths if _source_path_needs_refresh(path)}
+    if not needed:
         return
 
-    try:
+    _pending_source_pool_paths.update(needed)
+    due = time.monotonic() + SOURCE_REDISCOVERY_DELAY_SECONDS
+
+    if not _refresh_pending:
+        _refresh_pending = True
+        _refresh_due = due
+    else:
+        _refresh_due = min(_refresh_due, due)
+
+
+def _refresh_source_paths_now(paths: set[str], origin: str) -> None:
+    if not paths:
+        return
+
+    # Before the initial/world-transition graph exists, preserve the proven
+    # full initialization path. Normal gameplay sources use only targeted
+    # closure expansion after that point.
+    if not _graph_ready:
         _refresh_once(discover=True)
-    except Exception as exc:
+        return
+
+    started = time.perf_counter()
+    scope = _discover_source_closure(paths)
+    if not scope:
+        return
+
+    _reconcile(scope)
+    elapsed_ms = (time.perf_counter() - started) * 1000.0
+
+    if elapsed_ms > SOURCE_REFRESH_BUDGET_MS:
         _report_once(
-            f"source-refresh:{type(exc).__name__}:{exc}",
-            f"source-triggered refresh failed closed: {type(exc).__name__}: {exc}",
+            f"source-refresh-budget:{origin}",
+            f"targeted source refresh exceeded {SOURCE_REFRESH_BUDGET_MS:.1f} ms "
+            f"at {origin}: {elapsed_ms:.1f} ms across {len(scope)} pools",
         )
-        _restore_all()
 
 
 def _refresh_once(discover: bool) -> None:
@@ -1052,6 +1350,7 @@ def _refresh_once(discover: bool) -> None:
 
 def _schedule_refresh(delay_seconds: float, discover: bool) -> None:
     global _refresh_pending, _refresh_due, _refresh_needs_discovery
+    global _refresh_needs_reconcile
 
     due = time.monotonic() + max(0.0, float(delay_seconds))
 
@@ -1062,6 +1361,7 @@ def _schedule_refresh(delay_seconds: float, discover: bool) -> None:
         _refresh_due = min(_refresh_due, due)
 
     _refresh_needs_discovery = _refresh_needs_discovery or discover
+    _refresh_needs_reconcile = _refresh_needs_reconcile or not discover
 
 
 
@@ -1097,11 +1397,9 @@ def _balance_set_game_stage_hook(
     _ret: Any,
     _func: BoundFunction,
 ) -> None:
-    # Cheap source-aware check only. Full discovery happens only when a newly
-    # loaded AI death-loot root is actually observed.
-    _schedule_source_rediscovery_if_needed(
-        _ai_source_has_unknown_loaded_pool(obj)
-    )
+    # Record only the exact death-loot roots exposed by this AI source.
+    # Any late-loaded closure is expanded incrementally on the HUD boundary.
+    _schedule_source_paths(_ai_source_pool_paths(obj))
 
 
 @hook(LOOTABLE_INITIALIZE, Type.POST)
@@ -1111,11 +1409,9 @@ def _lootable_initialize_hook(
     _ret: Any,
     _func: BoundFunction,
 ) -> None:
-    # LootableComponent materializes its loot configurations before use. Trigger
-    # rediscovery only if those configurations reference an unknown loaded pool.
-    _schedule_source_rediscovery_if_needed(
-        _lootable_has_unknown_loaded_pool(obj)
-    )
+    # LootableComponent has already materialized its configurations here.
+    # Queue only the exact referenced roots, never a global ItemPoolData scan.
+    _schedule_source_paths(_lootable_pool_paths(obj))
 
 
 @hook(MISSION_COMPLETE, Type.PRE)
@@ -1125,20 +1421,12 @@ def _mission_complete_hook(
     _ret: Any,
     _func: BoundFunction,
 ) -> None:
-    # Mission rewards are infrequent. If the reward pool is already loaded and
-    # new to this runtime graph, rebuild synchronously before mission completion
-    # can resolve the reward.
-    if not _mission_has_unknown_loaded_reward_pool(obj):
-        return
-
-    try:
-        _refresh_once(discover=True)
-    except Exception as exc:
-        _report_once(
-            f"mission-refresh:{type(exc).__name__}:{exc}",
-            f"mission source refresh failed closed: {type(exc).__name__}: {exc}",
-        )
-        _restore_all()
+    # Mission rewards are infrequent but must be filtered before native reward
+    # resolution. Expand only this mission's reward-pool closure.
+    _refresh_source_paths_now(
+        _mission_reward_pool_paths(obj),
+        "MissionComplete",
+    )
 
 
 @hook(SPAWN_LOOT_ASYNC, Type.PRE)
@@ -1158,7 +1446,10 @@ def _spawn_loot_async_hook(
     except Exception:
         return
 
-    _refresh_unknown_source_now_if_needed(item_pools)
+    _refresh_source_paths_now(
+        _item_pool_list_paths(item_pools),
+        "SpawnLootAsync",
+    )
 
 
 @hook(SPAWN_LOOT, Type.PRE)
@@ -1176,7 +1467,10 @@ def _spawn_loot_hook(
     except Exception:
         return
 
-    _refresh_unknown_source_now_if_needed(item_pools)
+    _refresh_source_paths_now(
+        _item_pool_list_paths(item_pools),
+        "SpawnLoot",
+    )
 
 
 def _on_native_cosmetic_unlock() -> None:
@@ -1227,6 +1521,7 @@ def _hud_frame(
     global _pc_identity, _ready_since
     global _graph_ready
     global _refresh_pending, _refresh_due, _refresh_needs_discovery
+    global _refresh_needs_reconcile
 
     now = time.monotonic()
     identity = _player_identity(_obj)
@@ -1252,6 +1547,7 @@ def _hud_frame(
         _pool_nodes.clear()
         _cosmetic_leaf_records.clear()
         _customization_by_balance.clear()
+        _pending_source_pool_paths.clear()
 
         _refresh_pending = True
         settle = (
@@ -1261,6 +1557,7 @@ def _hud_frame(
         )
         _refresh_due = now + settle
         _refresh_needs_discovery = True
+        _refresh_needs_reconcile = False
         return
 
     if _ready_since is None:
@@ -1271,12 +1568,25 @@ def _hud_frame(
         return
 
     discover = _refresh_needs_discovery
+    reconcile = _refresh_needs_reconcile
+    source_paths = set(_pending_source_pool_paths)
+
     _refresh_pending = False
     _refresh_due = 0.0
     _refresh_needs_discovery = False
+    _refresh_needs_reconcile = False
+    _pending_source_pool_paths.clear()
 
     try:
-        _refresh_once(discover)
+        if discover:
+            _refresh_once(True)
+            return
+
+        if source_paths:
+            _refresh_source_paths_now(source_paths, "HUDSource")
+
+        if reconcile:
+            _refresh_once(False)
     except Exception as exc:
         _report_once(
             f"refresh-exception:{type(exc).__name__}:{exc}",
@@ -1289,6 +1599,7 @@ def _hud_frame(
 def on_enable() -> None:
     global _graph_ready, _pc_identity, _ready_since
     global _refresh_pending, _refresh_due, _refresh_needs_discovery
+    global _refresh_needs_reconcile
 
     _restore_all()
 
@@ -1305,6 +1616,8 @@ def on_enable() -> None:
     _refresh_pending = False
     _refresh_due = 0.0
     _refresh_needs_discovery = False
+    _refresh_needs_reconcile = False
+    _pending_source_pool_paths.clear()
 
 
 
