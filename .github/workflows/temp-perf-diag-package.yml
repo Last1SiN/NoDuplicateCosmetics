@@ -1,0 +1,85 @@
+name: Temporary perf diagnostic package
+
+on:
+  push:
+    branches:
+      - perf-diag-v1.0.1
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate and package exact diagnostic branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import tomllib
+          import zipfile
+
+          root = Path("NoDuplicateCosmetics")
+          source = root / "__init__.py"
+          metadata = root / "pyproject.toml"
+          archive = Path("dist/NoDuplicateCosmetics.sdkmod")
+
+          text = source.read_text(encoding="utf-8")
+          compile(text, str(source), "exec")
+
+          data = tomllib.loads(metadata.read_text(encoding="utf-8"))
+          project = data["project"]
+          sdkmod = data["tool"]["sdkmod"]
+
+          assert project["name"] == "NoDuplicateCosmetics"
+          assert sdkmod["name"] == "NoDuplicateCosmetics"
+          assert project["version"] == sdkmod["version"] == "1.0.1.1"
+          for version in (project["version"], sdkmod["version"]):
+              assert tuple(int(x) for x in version.split(".")) == (1, 0, 1, 1)
+
+          assert sdkmod["coop_support"] == "Unknown"
+          assert sdkmod["supported_games"] == ["BL3"]
+
+          required = {
+              "NoDuplicateCosmetics/__init__.py",
+              "NoDuplicateCosmetics/pyproject.toml",
+              "NoDuplicateCosmetics/README_EN.md",
+              "NoDuplicateCosmetics/README_RU.md",
+              "NoDuplicateCosmetics/LICENSE",
+              "NoDuplicateCosmetics/ADDITIONAL_TERMS.md",
+          }
+
+          forbidden = [
+              p for p in Path(".").rglob("*")
+              if "__pycache__" in p.parts or p.suffix in {".pyc", ".pyo"}
+          ]
+          assert not forbidden, forbidden
+
+          archive.parent.mkdir(exist_ok=True)
+          with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+              for path in sorted(root.rglob("*")):
+                  if path.is_file() and "__pycache__" not in path.parts and path.suffix not in {".pyc", ".pyo"}:
+                      zf.write(path, path.as_posix())
+
+          with zipfile.ZipFile(archive) as zf:
+              names = [n for n in zf.namelist() if n and not n.endswith("/")]
+              roots = {n.split("/", 1)[0] for n in names}
+              assert archive.stem == "NoDuplicateCosmetics"
+              assert roots == {"NoDuplicateCosmetics"}
+              assert set(names) == required
+              embedded = zf.read("NoDuplicateCosmetics/__init__.py")
+              compile(embedded, "NoDuplicateCosmetics/__init__.py", "exec")
+
+          print("version:", project["version"])
+          print("source_sha256:", hashlib.sha256(source.read_bytes()).hexdigest())
+          print("artifact_sha256:", hashlib.sha256(archive.read_bytes()).hexdigest())
+          print("ALL_GATES_PASS")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NoDuplicateCosmetics-perf-diag
+          path: dist/NoDuplicateCosmetics.sdkmod
+          if-no-files-found: error
