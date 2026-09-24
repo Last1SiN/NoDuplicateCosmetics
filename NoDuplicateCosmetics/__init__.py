@@ -5,7 +5,7 @@ import re
 import time
 
 import unrealsdk
-from mods_base import Game, build_mod, get_pc, hook
+from mods_base import MODS_DIR, Game, build_mod, get_pc, hook
 from unrealsdk import logging
 from unrealsdk.hooks import Type
 from unrealsdk.unreal import BoundFunction, UObject, WrappedStruct
@@ -55,6 +55,73 @@ _refresh_due = 0.0
 _refresh_needs_discovery = False
 
 _reported_errors: set[str] = set()
+
+PERF_DIAG_BUILD = "perf1"
+PERF_FRAME_GAP_MS = 20.0
+_perf_log_path = MODS_DIR / "NoDuplicateCosmetics_perf.log"
+_perf_log_handle: Any = None
+_perf_seq = 0
+_perf_last_frame: float | None = None
+
+
+def _perf_open() -> None:
+    global _perf_log_handle, _perf_seq, _perf_last_frame
+
+    try:
+        if _perf_log_handle is not None:
+            _perf_log_handle.close()
+    except Exception:
+        pass
+
+    _perf_log_handle = None
+    _perf_seq = 0
+    _perf_last_frame = None
+
+    try:
+        _perf_log_handle = _perf_log_path.open(
+            "w",
+            encoding="utf-8",
+            buffering=1,
+        )
+    except Exception:
+        _perf_log_handle = None
+
+    _perf_log(
+        "DIAG_START",
+        f"build={PERF_DIAG_BUILD} frame_gap_threshold_ms={PERF_FRAME_GAP_MS:.1f}",
+    )
+
+
+def _perf_close() -> None:
+    global _perf_log_handle
+
+    handle = _perf_log_handle
+    _perf_log_handle = None
+    if handle is None:
+        return
+
+    try:
+        handle.flush()
+        handle.close()
+    except Exception:
+        pass
+
+
+def _perf_log(event: str, details: str = "") -> None:
+    global _perf_seq
+
+    handle = _perf_log_handle
+    if handle is None:
+        return
+
+    _perf_seq += 1
+    stamp = time.perf_counter()
+    suffix = f" {details}" if details else ""
+
+    try:
+        handle.write(f"{_perf_seq:06d} t={stamp:.6f} {event}{suffix}\n")
+    except Exception:
+        pass
 
 
 def _path(obj: Any) -> str:
@@ -1023,30 +1090,85 @@ def _schedule_source_rediscovery_if_needed(needed: bool) -> None:
         _schedule_refresh(SOURCE_REDISCOVERY_DELAY_SECONDS, discover=True)
 
 
-def _refresh_unknown_source_now_if_needed(item_pools: Any) -> None:
+def _refresh_unknown_source_now_if_needed(
+    item_pools: Any,
+    origin: str,
+) -> None:
     # Last-chance synchronous guard for native SpawnLoot: if the actual source
     # root is loaded but not yet present in our graph, rebuild+reconcile before
     # native stock selection proceeds.
-    if not _item_pool_list_has_unknown_loaded_pool(item_pools):
+    check_started = time.perf_counter()
+    unknown = _item_pool_list_has_unknown_loaded_pool(item_pools)
+    check_ms = (time.perf_counter() - check_started) * 1000.0
+
+    if not unknown:
+        if check_ms >= 2.0:
+            _perf_log(
+                "SOURCE_CHECK_SLOW",
+                f"origin={origin} unknown=False check_ms={check_ms:.3f}",
+            )
         return
 
+    _perf_log(
+        "SOURCE_UNKNOWN",
+        f"origin={origin} check_ms={check_ms:.3f}",
+    )
+
+    refresh_started = time.perf_counter()
     try:
-        _refresh_once(discover=True)
+        _refresh_once(discover=True, origin=origin)
     except Exception as exc:
         _report_once(
             f"source-refresh:{type(exc).__name__}:{exc}",
             f"source-triggered refresh failed closed: {type(exc).__name__}: {exc}",
         )
         _restore_all()
+    finally:
+        total_ms = (time.perf_counter() - refresh_started) * 1000.0
+        _perf_log(
+            "SOURCE_REFRESH_DONE",
+            f"origin={origin} total_ms={total_ms:.3f}",
+        )
 
 
-def _refresh_once(discover: bool) -> None:
+def _refresh_once(discover: bool, origin: str = "unknown") -> None:
+    total_started = time.perf_counter()
+    discover_ms = 0.0
+
     if discover or not _graph_ready:
-        if not _discover_loaded_graph():
+        discover_started = time.perf_counter()
+        discovered = _discover_loaded_graph()
+        discover_ms = (time.perf_counter() - discover_started) * 1000.0
+
+        if not discovered:
             _restore_all()
+            total_ms = (time.perf_counter() - total_started) * 1000.0
+            _perf_log(
+                "REFRESH",
+                (
+                    f"origin={origin} discover={discover} discovered=False "
+                    f"discover_ms={discover_ms:.3f} reconcile_ms=0.000 "
+                    f"total_ms={total_ms:.3f} pools={len(_pool_nodes)} "
+                    f"leaves={len(_cosmetic_leaf_records)} managed={len(_managed)}"
+                ),
+            )
             return
 
+    reconcile_started = time.perf_counter()
     stats = _reconcile()
+    reconcile_ms = (time.perf_counter() - reconcile_started) * 1000.0
+    total_ms = (time.perf_counter() - total_started) * 1000.0
+
+    _perf_log(
+        "REFRESH",
+        (
+            f"origin={origin} discover={discover} discovered=True "
+            f"discover_ms={discover_ms:.3f} reconcile_ms={reconcile_ms:.3f} "
+            f"total_ms={total_ms:.3f} pools={len(_pool_nodes)} "
+            f"leaves={len(_cosmetic_leaf_records)} managed={len(_managed)}"
+        ),
+    )
+
     if stats is None:
         return
 
@@ -1099,9 +1221,20 @@ def _balance_set_game_stage_hook(
 ) -> None:
     # Cheap source-aware check only. Full discovery happens only when a newly
     # loaded AI death-loot root is actually observed.
-    _schedule_source_rediscovery_if_needed(
-        _ai_source_has_unknown_loaded_pool(obj)
-    )
+    started = time.perf_counter()
+    needed = _ai_source_has_unknown_loaded_pool(obj)
+    elapsed_ms = (time.perf_counter() - started) * 1000.0
+
+    if needed or elapsed_ms >= 2.0:
+        _perf_log(
+            "AI_SOURCE_CHECK",
+            (
+                f"needed={needed} check_ms={elapsed_ms:.3f} "
+                f"path={_path(obj)}"
+            ),
+        )
+
+    _schedule_source_rediscovery_if_needed(needed)
 
 
 @hook(LOOTABLE_INITIALIZE, Type.POST)
@@ -1113,9 +1246,20 @@ def _lootable_initialize_hook(
 ) -> None:
     # LootableComponent materializes its loot configurations before use. Trigger
     # rediscovery only if those configurations reference an unknown loaded pool.
-    _schedule_source_rediscovery_if_needed(
-        _lootable_has_unknown_loaded_pool(obj)
-    )
+    started = time.perf_counter()
+    needed = _lootable_has_unknown_loaded_pool(obj)
+    elapsed_ms = (time.perf_counter() - started) * 1000.0
+
+    if needed or elapsed_ms >= 2.0:
+        _perf_log(
+            "LOOTABLE_SOURCE_CHECK",
+            (
+                f"needed={needed} check_ms={elapsed_ms:.3f} "
+                f"path={_path(obj)}"
+            ),
+        )
+
+    _schedule_source_rediscovery_if_needed(needed)
 
 
 @hook(MISSION_COMPLETE, Type.PRE)
@@ -1132,7 +1276,7 @@ def _mission_complete_hook(
         return
 
     try:
-        _refresh_once(discover=True)
+        _refresh_once(discover=True, origin="MissionComplete")
     except Exception as exc:
         _report_once(
             f"mission-refresh:{type(exc).__name__}:{exc}",
@@ -1158,7 +1302,7 @@ def _spawn_loot_async_hook(
     except Exception:
         return
 
-    _refresh_unknown_source_now_if_needed(item_pools)
+    _refresh_unknown_source_now_if_needed(item_pools, "SpawnLootAsync")
 
 
 @hook(SPAWN_LOOT, Type.PRE)
@@ -1176,7 +1320,7 @@ def _spawn_loot_hook(
     except Exception:
         return
 
-    _refresh_unknown_source_now_if_needed(item_pools)
+    _refresh_unknown_source_now_if_needed(item_pools, "SpawnLoot")
 
 
 def _on_native_cosmetic_unlock() -> None:
@@ -1227,6 +1371,20 @@ def _hud_frame(
     global _pc_identity, _ready_since
     global _graph_ready
     global _refresh_pending, _refresh_due, _refresh_needs_discovery
+    global _perf_last_frame
+
+    perf_now = time.perf_counter()
+    if _perf_last_frame is not None:
+        frame_gap_ms = (perf_now - _perf_last_frame) * 1000.0
+        if frame_gap_ms >= PERF_FRAME_GAP_MS:
+            _perf_log(
+                "FRAME_GAP",
+                (
+                    f"ms={frame_gap_ms:.3f} pending={_refresh_pending} "
+                    f"discover_pending={_refresh_needs_discovery}"
+                ),
+            )
+    _perf_last_frame = perf_now
 
     now = time.monotonic()
     identity = _player_identity(_obj)
@@ -1276,7 +1434,7 @@ def _hud_frame(
     _refresh_needs_discovery = False
 
     try:
-        _refresh_once(discover)
+        _refresh_once(discover, origin="HUDDeferred")
     except Exception as exc:
         _report_once(
             f"refresh-exception:{type(exc).__name__}:{exc}",
@@ -1290,6 +1448,8 @@ def on_enable() -> None:
     global _graph_ready, _pc_identity, _ready_since
     global _refresh_pending, _refresh_due, _refresh_needs_discovery
 
+    _perf_open()
+    _perf_log("ENABLE")
     _restore_all()
 
     _graph_ready = False
@@ -1309,7 +1469,12 @@ def on_enable() -> None:
 
 
 def on_disable() -> None:
+    _perf_log("DISABLE_BEGIN")
+    started = time.perf_counter()
     _restore_all()
+    elapsed_ms = (time.perf_counter() - started) * 1000.0
+    _perf_log("DISABLE_DONE", f"restore_ms={elapsed_ms:.3f}")
+    _perf_close()
 
 
 mod = build_mod(on_enable=on_enable, on_disable=on_disable)
