@@ -1,6 +1,6 @@
 [project]
 name = "NoDuplicateCosmetics"
-version = "1.0.1"
+version = "1.0.2"
 description = "Prevents already-owned cosmetics from dropping in Borderlands 3 while preserving native source-local loot behavior."
 authors = [
     { name = "Sol / GPT-5.6 Sol" }
@@ -15,7 +15,7 @@ AdditionalTerms = "https://github.com/Last1SiN/NoDuplicateCosmetics/blob/main/AD
 
 [tool.sdkmod]
 name = "NoDuplicateCosmetics"
-version = "1.0.1"
+version = "1.0.2"
 license = { name = "GPL3 + Section 7 terms", url = "https://github.com/Last1SiN/NoDuplicateCosmetics/blob/main/ADDITIONAL_TERMS.md" }
 download = "https://github.com/Last1SiN/NoDuplicateCosmetics/releases/latest/download/NoDuplicateCosmetics.sdkmod"
 coop_support = "Unknown"
