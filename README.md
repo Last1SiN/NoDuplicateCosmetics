@@ -2,16 +2,17 @@
 
 [English](README.md) | [Русский](README_RU.md)
 
-NoDuplicateCosmetics is a Borderlands 3 PythonSDK mod which prevents already-owned cosmetics from being dropped again while preserving the game's native, source-local loot behavior.
+NoDuplicateCosmetics stops cosmetics you already own from dropping again.
 
-Instead of replacing a rejected cosmetic with unrelated loot, the mod makes owned cosmetic entries ineligible **before native loot selection** and leaves the original pool structure, reachability, probabilities and selection counts intact.
+It does not turn a blocked cosmetic into bonus gear or reroll the drop into something unrelated. The owned cosmetic is simply removed from the choices before Borderlands 3 picks the drop, so the rest of that loot source keeps behaving normally.
 
 ## Features
 
-- Filters already-owned cosmetics before loot selection on drop.
-- Preserves each source's native, source-local loot graph and reachability.
-- Mixed gear + cosmetic pools continue through the game's native resolver.
-- An exhausted dedicated cosmetic branch produces no cosmetic from that branch.
+- Prevents already-owned cosmetics from dropping again.
+- Works before the game makes its final loot choice.
+- Does not replace blocked cosmetics with unrelated items.
+- Mixed loot pools still behave normally.
+- If a cosmetic-only branch has nothing new left to give you, that branch simply gives no cosmetic.
 
 ## Requirements
 
