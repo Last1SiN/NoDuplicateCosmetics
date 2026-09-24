@@ -55,8 +55,6 @@ _refresh_due = 0.0
 _refresh_needs_discovery = False
 
 _reported_errors: set[str] = set()
-_startup_reported = False
-_last_topology_summary: tuple[int, int, int, int] | None = None
 
 
 def _path(obj: Any) -> str:
@@ -495,7 +493,7 @@ def _apply_record(record: dict[str, Any], mode: str) -> bool:
 
 
 def _discover_loaded_graph() -> bool:
-    global _graph_ready, _last_topology_summary
+    global _graph_ready
 
     if not _rebuild_customization_map():
         return False
@@ -592,20 +590,6 @@ def _discover_loaded_graph() -> bool:
     _cosmetic_leaf_records.update(new_cosmetic_leaves)
     _graph_ready = bool(_pool_nodes)
 
-    mapped_cosmetic = sum(
-        1 for record in _cosmetic_leaf_records.values()
-        if record["balance_kind"] == "cosmetic"
-    )
-    unmapped_cosmetic = len(_cosmetic_leaf_records) - mapped_cosmetic
-
-    summary = (
-        len(_pool_nodes),
-        len(_cosmetic_leaf_records),
-        mapped_cosmetic,
-        unmapped_cosmetic,
-    )
-
-    _last_topology_summary = summary
     return _graph_ready
 
 
@@ -1057,8 +1041,6 @@ def _refresh_unknown_source_now_if_needed(item_pools: Any) -> None:
 
 
 def _refresh_once(discover: bool) -> None:
-    global _startup_reported
-
     if discover or not _graph_ready:
         if not _discover_loaded_graph():
             _restore_all()
@@ -1067,10 +1049,6 @@ def _refresh_once(discover: bool) -> None:
     stats = _reconcile()
     if stats is None:
         return
-
-    if not _startup_reported:
-        _startup_reported = True
-
 
 def _schedule_refresh(delay_seconds: float, discover: bool) -> None:
     global _refresh_pending, _refresh_due, _refresh_needs_discovery
@@ -1247,7 +1225,7 @@ def _hud_frame(
     _func: BoundFunction,
 ) -> None:
     global _pc_identity, _ready_since
-    global _graph_ready, _startup_reported, _last_topology_summary
+    global _graph_ready
     global _refresh_pending, _refresh_due, _refresh_needs_discovery
 
     now = time.monotonic()
@@ -1270,8 +1248,6 @@ def _hud_frame(
         _pc_identity = identity
         _ready_since = now
         _graph_ready = False
-        _startup_reported = False
-        _last_topology_summary = None
 
         _pool_nodes.clear()
         _cosmetic_leaf_records.clear()
@@ -1313,7 +1289,6 @@ def _hud_frame(
 def on_enable() -> None:
     global _graph_ready, _pc_identity, _ready_since
     global _refresh_pending, _refresh_due, _refresh_needs_discovery
-    global _startup_reported, _last_topology_summary
 
     _restore_all()
 
@@ -1330,8 +1305,6 @@ def on_enable() -> None:
     _refresh_pending = False
     _refresh_due = 0.0
     _refresh_needs_discovery = False
-    _startup_reported = False
-    _last_topology_summary = None
 
 
 
