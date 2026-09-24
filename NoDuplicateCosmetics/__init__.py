@@ -1280,13 +1280,28 @@ def _mission_reward_pool_paths(obj: UObject) -> set[str]:
     return {pool_path} if pool_path is not None else set()
 
 
+def _source_path_needs_refresh(pool_path: str) -> bool:
+    node = _pool_nodes.get(pool_path)
+    if node is None:
+        return _find_loaded_object("ItemPoolData", pool_path) is not None
+
+    for record in node["entries"]:
+        if record["kind"] != "child" or record["child"] is not None:
+            continue
+        if _find_loaded_object("ItemPoolData", record["child_path"]) is not None:
+            return True
+
+    return False
+
+
 def _schedule_source_paths(paths: set[str]) -> None:
     global _refresh_pending, _refresh_due
 
-    if not paths:
+    needed = {path for path in paths if _source_path_needs_refresh(path)}
+    if not needed:
         return
 
-    _pending_source_pool_paths.update(paths)
+    _pending_source_pool_paths.update(needed)
     due = time.monotonic() + SOURCE_REDISCOVERY_DELAY_SECONDS
 
     if not _refresh_pending:
@@ -1561,8 +1576,6 @@ def _hud_frame(
     _refresh_needs_discovery = False
     _refresh_needs_reconcile = False
     _pending_source_pool_paths.clear()
-    _refresh_needs_reconcile = False
-    _pending_source_pool_paths.clear()
 
     try:
         if discover:
@@ -1603,6 +1616,8 @@ def on_enable() -> None:
     _refresh_pending = False
     _refresh_due = 0.0
     _refresh_needs_discovery = False
+    _refresh_needs_reconcile = False
+    _pending_source_pool_paths.clear()
 
 
 
