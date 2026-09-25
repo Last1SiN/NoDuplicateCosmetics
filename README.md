@@ -26,8 +26,7 @@ Use the [official BL3 SDK / Oak installation guide](https://bl-sdk.github.io/oak
 1. Install or update BL3 PythonSDK / Oak using the official guide above.
 2. Download `NoDuplicateCosmetics.sdkmod` from [GitHub Releases](https://github.com/Last1SiN/NoDuplicateCosmetics/releases/latest).
 3. With Borderlands 3 closed, copy the `.sdkmod` file intact to `Borderlands 3\sdk_mods\`. Do not extract the `.sdkmod` itself.
-4. Remove old NoDuplicateCosmetics test/probe builds so only one NoDuplicateCosmetics runtime mod can load.
-5. Start the game, open **MODS -> NoDuplicateCosmetics** and enable the mod.
+4. Start the game, open **MODS -> NoDuplicateCosmetics** and enable the mod.
 
 To update NoDuplicateCosmetics, replace the existing `.sdkmod` with the newer file and restart the game.
 
