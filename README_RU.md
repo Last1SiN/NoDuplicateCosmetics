@@ -26,8 +26,7 @@ NoDuplicateCosmetics не даёт уже открытой косметике в
 1. Установите или обновите BL3 PythonSDK / Oak по официальной инструкции выше.
 2. Скачайте `NoDuplicateCosmetics.sdkmod` из [GitHub Releases](https://github.com/Last1SiN/NoDuplicateCosmetics/releases/latest).
 3. При полностью закрытой Borderlands 3 скопируйте `.sdkmod` целиком в `Borderlands 3\sdk_mods\`. Сам `.sdkmod` распаковывать не нужно.
-4. Удалите старые test/probe-сборки NoDuplicateCosmetics, чтобы одновременно загружалась только одна runtime-версия NoDuplicateCosmetics.
-5. Запустите игру, откройте **MODS -> NoDuplicateCosmetics** и включите мод.
+4. Запустите игру, откройте **MODS -> NoDuplicateCosmetics** и включите мод.
 
 Для обновления замените существующий `.sdkmod` новым файлом и перезапустите игру.
 
